@@ -7,10 +7,10 @@ Se valida al arrancar: si falta una clave obligatoria se lanza
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.exceptions import ConfigurationException
@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     search_operation: Literal["rent", "sale"] = "rent"
     apify_max_items: int = Field(default=40, ge=1, le=200)
     apify_timeout_seconds: int = Field(default=300, ge=10, le=900)
+    # Tope de gasto por ejecución de actor (None = sin límite explícito).
+    apify_max_charge_usd: float | None = Field(default=None, gt=0)
 
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -65,6 +67,23 @@ class Settings(BaseSettings):
     daily_preferences: str | None = None
 
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Directorio donde persistir los resultados (vacío = solo en memoria).
+    results_dir: str = "data/results"
+
+    @field_validator(
+        "apify_max_charge_usd",
+        "daily_max_price_eur",
+        "daily_min_size_m2",
+        "daily_min_rooms",
+        "daily_preferences",
+        mode="before",
+    )
+    @classmethod
+    def _blank_to_none(cls, value: Any) -> Any:
+        """``VAR=`` en el ``.env`` significa "sin definir", no un valor vacío."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def _validate_required_secrets(self) -> "Settings":

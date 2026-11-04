@@ -8,6 +8,34 @@ fecha + criterio.
 
 Construido con Clean Architecture (dominio → aplicación → infraestructura/API) y SOLID.
 
+## Documentación
+
+| Documento | Contenido |
+|---|---|
+| [docs/USAGE.md](docs/USAGE.md) | Guía de uso: tokens, actores de Apify, recetas `curl`, cliente Python, errores y resolución de problemas. |
+| [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md) | Especificación técnica: ports, modelo de datos, flujo del job, excepciones y riesgos. |
+| `/docs` y `/redoc` (en ejecución) | OpenAPI interactivo autogenerado. |
+
+## Cómo funciona
+
+```
+POST /api/v1/searches
+   │
+   ├─ 1. Apify        → scrapea Idealista y Fotocasa, devuelve anuncios crudos en JSON
+   ├─ 2. Filtro duro  → descarta por precio / m² / habitaciones (barato, en origen)
+   ├─ 3. DeepSeek     → puntúa cada anuncio: relevance 0-1 + reason
+   └─ 4. Repositorio  → guarda el resultado y responde 201
+```
+
+**Apify** es la pieza de scraping: Idealista y Fotocasa no tienen API pública y bloquean el
+scraping directo, así que el proyecto delega en actores de Apify, que devuelven los anuncios
+como JSON. Apify **solo obtiene datos crudos**; el filtrado fino y la puntuación de
+relevancia los hace DeepSeek. Ver
+[¿Qué papel juega Apify?](docs/USAGE.md#41-qué-papel-juega-apify).
+
+**DeepSeek** es el clasificador: recibe los anuncios ya normalizados y responde, para cada
+uno, `relevance` (0.0-1.0) y `reason` en español.
+
 ## Estructura
 
 ```
@@ -24,7 +52,7 @@ app/
 ├── infrastructure/
 │   ├── scrapers/apify_scraper.py
 │   ├── classifiers/deepseek_classifier.py
-│   ├── repositories/memory_repository.py
+│   ├── repositories/          # memory (volátil) + json_file (persistente)
 │   └── logging_config.py    # structlog (JSON en prod, consola en dev)
 ├── api/
 │   ├── schemas.py           # DTOs Pydantic v2
@@ -74,10 +102,13 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 | `SEARCH_OPERATION` | `rent` | `rent` (alquiler) \| `sale` (compraventa). |
 | `APIFY_MAX_ITEMS` | `40` | Tope de anuncios solicitados por portal. |
 | `APIFY_TIMEOUT_SECONDS` | `300` | Timeout de la ejecución del actor. |
+| `APIFY_MAX_CHARGE_USD` | sin límite | Tope de gasto por ejecución de actor, en USD. |
 | `DEEPSEEK_API_KEY` | — | **Obligatoria**. Clave del LLM. |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Endpoint compatible con OpenAI. |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | Modelo usado en la clasificación. |
 | `DAILY_SEARCH_*` | Madrid / 1500 € / 60 m² / 2 hab. | Criterios del job diario. |
+| `RELEVANCE_THRESHOLD` | `0.6` | Umbral mínimo de relevancia para aceptar un anuncio. |
+| `RESULTS_DIR` | `data/results` | Directorio de resultados JSON (vacío = solo memoria). |
 
 ## API
 
@@ -134,8 +165,11 @@ scraper, parseo del clasificador, endpoints y logging.
   las implementaciones es `build_container()` en `api/dependencies.py`.
 - **OCP**: añadir un portal es crear otro actor + entrada en `actor_ids`; añadir otro LLM
   es escribir un nuevo `ClassifierPort`. Nada más cambia.
-- **Persistencia**: `InMemoryListingRepository` es solo la implementación de referencia;
-  sustituirla por Postgres/Redis no requiere tocar servicios (los datos se pierden al
-  reiniciar el proceso).
+- **Persistencia**: `JsonFileListingRepository` guarda un JSON por búsqueda en
+  `data/results/` (incluye los **enlaces** de cada anuncio) y reconstruye su índice al
+  arrancar, así que los resultados y la idempotencia diaria sobreviven a un reinicio.
+  Con `RESULTS_DIR=` vacío se usa `InMemoryListingRepository` (solo memoria). Cambiar a
+  Postgres/Redis es escribir otro adaptador del mismo port, sin tocar servicios.
 
 Documentación de la feature: [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md).
+Guía de uso paso a paso: [docs/USAGE.md](docs/USAGE.md).

@@ -27,9 +27,19 @@ _SYSTEM_PROMPT = (
     '{"assessments": [{"listing_url": "<url exacta del anuncio>", '
     '"relevance": <número entre 0 y 1>, "matches": <true|false>, '
     '"reason": "<motivo breve en español>"}]}\n'
-    "Reglas: usa exactamente las URLs recibidas (no inventes ninguna), "
-    "evalúa todos los anuncios, penaliza lo que incumpla los criterios duros del "
-    "usuario y puntúa 0.8 o más solo si el anuncio encaja claramente. "
+    "Reglas:\n"
+    "- Usa exactamente las URLs recibidas (no inventes ninguna) y evalúa todos los anuncios.\n"
+    "- El campo 'amenities' lista comodidades verificadas por el portal: si el usuario pide "
+    "piscina y 'swimming_pool' no aparece, no asumas que la tiene.\n"
+    "- 'relevance' es una puntuación gradual, NO un sí/no. Guíate por esta escala: "
+    "0.9-1.0 = cumple los criterios del filtro y todas las preferencias; "
+    "0.7-0.9 = cumple el filtro y la mayoría de las preferencias (falta algún extra); "
+    "0.5-0.7 = cumple el filtro pero le faltan varios extras; "
+    "0.3-0.5 = cumple el filtro pero es de otro tipo de vivienda; "
+    "0.0-0.3 = incumple el filtro o no es lo que se busca.\n"
+    "- Las preferencias son deseables, no excluyentes: que falte una (por ejemplo una pista "
+    "de pádel rara vez anunciada) resta puntuación, pero no debe llevar a 0 si el resto encaja.\n"
+    "- 'matches' es solo informativo; el sistema decide con 'relevance'.\n"
     "No añadas texto fuera del JSON."
 )
 
@@ -87,6 +97,7 @@ class DeepSeekListingClassifier:
                     "bathrooms": listing.bathrooms,
                     "location": listing.location,
                     "price_per_m2": listing.price_per_m2,
+                    "amenities": list(listing.amenities),
                     "description": (listing.description or "")[:600],
                 }
                 for listing in listings
@@ -151,9 +162,10 @@ class DeepSeekListingClassifier:
                 # El modelo pudo alucinar una URL: se descarta silenciosamente.
                 continue
             relevance = self._clamp(raw.get("relevance"))
-            matches = raw.get("matches")
-            if not isinstance(matches, bool):
-                matches = relevance >= self._relevance_threshold
+            # El umbral decide la aceptación: el LLM solo puntúa. Así el criterio es
+            # determinista, configurable (RELEVANCE_THRESHOLD) y no depende de que el
+            # modelo interprete todas las preferencias como excluyentes.
+            matches = relevance >= self._relevance_threshold
             reason = raw.get("reason")
             assessments.append(
                 ListingAssessment(

@@ -1,0 +1,631 @@
+# Guía de uso
+
+Guía práctica para poner en marcha y consumir el agente de búsqueda inmobiliaria.
+Para el diseño interno consulta [../specs/real-estate-search-agent/plan.md](../specs/real-estate-search-agent/plan.md);
+para el resumen del proyecto, [../README.md](../README.md).
+
+## Índice
+
+1. [Requisitos](#1-requisitos)
+2. [Puesta en marcha](#2-puesta-en-marcha)
+3. [Obtener los tokens](#3-obtener-los-tokens)
+4. [Configurar los actores de Apify](#4-configurar-los-actores-de-apify) — incluye [qué papel juega Apify](#41-qué-papel-juega-apify), [¿necesito suscripción?](#42-necesito-una-suscripción-de-pago), [entorno `.env`](#43-entorno-env) y [esquema por portal](#44-esquema-de-entrada-por-portal)
+5. [Arrancar el servidor](#5-arrancar-el-servidor)
+6. [Recetas con curl](#6-recetas-con-curl)
+7. [Cliente en Python](#7-cliente-en-python)
+8. [Interpretar la respuesta](#8-interpretar-la-respuesta)
+9. [Errores y cómo resolverlos](#9-errores-y-cómo-resolverlos)
+10. [Búsqueda diaria programada](#10-búsqueda-diaria-programada)
+11. [Modo sin credenciales (tests)](#11-modo-sin-credenciales-tests)
+
+---
+
+## 1. Requisitos
+
+- Python **3.11+** (probado con 3.13).
+- Cuenta de **Apify** con un actor de scraping por portal.
+- Clave de API de **DeepSeek**.
+- Opcional: `curl` o `httpx` para probar la API.
+
+## 2. Puesta en marcha
+
+```powershell
+# Windows (PowerShell)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+Copy-Item .env.example .env
+```
+
+```bash
+# Linux / macOS
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
+```
+
+Edita `.env` y rellena como mínimo:
+
+```dotenv
+APIFY_TOKEN=apify_api_xxxxxxxxxxxxxxxxxxxx
+DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
+```
+
+## 3. Obtener los tokens
+
+**Apify**
+
+1. Entra en <https://console.apify.com/account/integrations>.
+2. Copia el *Personal API token* en `APIFY_TOKEN`.
+
+**DeepSeek**
+
+1. Entra en <https://platform.deepseek.com/api_keys>.
+2. Crea una clave y cópiala en `DEEPSEEK_API_KEY`.
+
+> Las claves nunca se registran en los logs. Si faltan, el arranque falla con
+> `CONFIGURATION_ERROR` y un mensaje que lista las variables ausentes.
+
+## 4. Configurar los actores de Apify
+
+### 4.1 ¿Qué papel juega Apify?
+
+Idealista y Fotocasa **no ofrecen API pública** y aplican protección anti-bot (bloqueo por
+IP de datacenter, rate limiting, retos de JavaScript). En vez de implementar y mantener
+navegadores headless y rotación de proxies, se delega en **actores de Apify**: programas ya
+empaquetados que hacen ese trabajo y publican el resultado como un *dataset* JSON.
+
+En la arquitectura, Apify es **una implementación más del puerto `ScraperPort`**:
+
+```
+SearchService → ScraperPort (interfaz) → ApifyListingScraper → Apify
+```
+
+Secuencia real para cada portal ([`apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py)):
+
+1. `client.actor(actor_id).call(run_input, timeout_secs)` — lanza el actor y espera a que termine.
+2. `run["defaultDatasetId"]` — localiza el dataset de resultados.
+3. `client.dataset(id).iterate_items()` — recorre los anuncios crudos.
+4. `_normalize()` — traduce cada item a la entidad de dominio `Listing`.
+5. `_matches_hard_criteria()` — descarta lo que incumple precio/m²/habitaciones **antes**
+   de llamar al LLM, para no gastar tokens.
+
+Al ser el SDK síncrono, la llamada se ejecuta con `asyncio.to_thread` para no bloquear el
+event loop de FastAPI.
+
+**Lo que Apify NO hace:** no filtra por preferencias en lenguaje natural ni puntúa
+relevancia. Solo devuelve anuncios crudos; eso lo resuelve el clasificador DeepSeek.
+
+**Coste:** cada ejecución de actor consume créditos. `APIFY_MAX_ITEMS` acota el gasto y la
+idempotencia del job diario evita repetir búsquedas ya hechas. Sin token o con un actor
+inexistente, la API responde `502` con `code: "SCRAPER_FAILURE"`.
+
+**Sustituible:** al estar detrás de un `Protocol`, cambiar de proveedor (o usar un scraper
+propio) es escribir otra clase con `fetch_listings()` y cambiarla en `build_container()`.
+Ni los servicios ni los endpoints se tocan.
+
+### 4.2 ¿Necesito una suscripción de pago?
+
+**No para empezar.** Apify tiene un plan **Free** ($0/mes) que incluye **$5 de uso** al mes,
+suficiente para probar y para un uso ligero. Necesitas **crear una cuenta** (gratis) para
+obtener el API token, pero no una suscripción de pago.
+
+Hay dos costes independientes que conviene no confundir:
+
+| Coste | Quién lo cobra | Notas |
+|---|---|---|
+| **Plataforma** (compute, proxies, almacenamiento) | Apify | El plan Free incluye $5/mes. Si lo agotas, **el acceso se bloquea** hasta el mes siguiente (no se factura de más). |
+| **Actor de Store** | El autor del actor | La mayoría son *pay-per-event* (p. ej. por cada resultado). Algunos son *pay-per-usage* y otros gratuitos. |
+
+Lo que determina tu factura real es el **actor concreto de Idealista/Fotocasa** que elijas,
+no el plan. Revisa la pestaña **Pricing** de cada actor en Apify Store antes de usarlo: verás
+si cobra por resultado, por ejecución o solo el uso de plataforma.
+
+Planes (precios de la página oficial de Apify, nov. 2025):
+
+| Plan | Precio | Uso incluido | Notas |
+|---|---|---|---|
+| Free | $0 | $5/mes | 5 ejecuciones concurrentes, 16 GB RAM |
+| Starter | $19/mes | $19/mes | Descuentos Bronze en Store, soporte por chat |
+| Scale | $199/mes | $199/mes | Descuentos Silver |
+| Business | $999/mes | $999/mes | Descuentos Gold, account manager |
+
+> Los créditos **no se acumulan** entre meses. En planes de pago, el exceso se factura
+> *pay-as-you-go* hasta el límite de gasto que configures.
+
+**Controlar el gasto en este proyecto:**
+
+```dotenv
+APIFY_MAX_ITEMS=40          # menos anuncios = menos eventos facturables
+APIFY_MAX_CHARGE_USD=0.50   # tope duro por ejecución de actor (opcional)
+```
+`APIFY_MAX_CHARGE_USD` se pasa al SDK como `max_total_charge_usd`: el actor se detiene al
+alcanzarlo y **nunca se factura por encima de ese límite**. Además, el job diario es
+idempotente, así que no repite ejecuciones (ni gasto) el mismo día con los mismos criterios.
+
+Recomendación: empieza con el plan **Free** y un `APIFY_MAX_ITEMS` bajo; si el uso diario te
+resulta útil, pasa a **Starter ($19/mes)**.
+
+### 4.3 Entorno `.env`
+
+Configuración mínima que funciona (verificada en vivo):
+
+```dotenv
+APIFY_TOKEN=apify_api_...
+DEEPSEEK_API_KEY=sk-...
+SEARCH_OPERATION=sale
+
+# Actores (salvo que uses los tuyos, deja estos)
+APIFY_IDEALISTA_ACTOR=igolaizola/idealista-scraper
+APIFY_FOTOCASA_ACTOR=
+
+APIFY_MAX_ITEMS=40
+APIFY_TIMEOUT_SECONDS=600
+APIFY_MAX_CHARGE_USD=0.15
+
+RELEVANCE_THRESHOLD=0.5
+```
+
+`APIFY_TIMEOUT_SECONDS=600` evita cortar el run: con 40 anuncios el actor tarda ~25 s, pero
+`fetchDetails`/`fetchStats` lo hacen mucho más lento.
+
+### 4.4 Esquema de entrada por portal
+
+Cada actor tiene su propio vocabulario y el scraper lo adapta automáticamente (perfiles
+`_PROFILES` en [`apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py)):
+
+| Concepto | `igolaizola/idealista-scraper` | `igolaizola/fotocasa-scraper` |
+|---|---|---|
+| `operation` | `sale` \| `rent` | `buy` \| `rent` |
+| `propertyType` | `homes` | `home` |
+| `country` | `es` (obligatorio) | no aplica |
+| `minPrice`/`maxPrice`/`minSize` | **string** (`"900000"`) | **entero** (`900000`) |
+
+Ambos comparten `location`, `maxItems` y `minPrice`/`maxPrice`/`minSize`. Los portales
+**sin actor configurado se omiten** con un `WARNING` (`scraper_portal_skipped`) en lugar de
+tumbar la búsqueda; si ninguno está configurado, se lanza `ScraperException`.
+
+> **Fotocasa**: el mapeo de *entrada* está implementado, pero su *salida* usa otra forma
+> (`transaction.price`, `surface`, `baths`) y no expone `url` en el ejemplo del actor, así
+> que el normalizador aún no está validado. Por eso `APIFY_FOTOCASA_ACTOR` viene vacío: el
+> portal se omite hasta validarlo.
+
+### 4.5 Elegir los actores
+
+Los valores por defecto (`idealista-scraper`, `fotocasa-scraper`) son **marcadores de
+posición**: debes sustituirlos por los identificadores reales de los actores de tu cuenta.
+
+1. En Apify Store busca un actor de Idealista y otro de Fotocasa.
+2. Abre el actor y copia su identificador, con formato `usuario/nombre-del-actor`.
+3. Pégalos en `.env`:
+```dotenv
+APIFY_IDEALISTA_ACTOR=mi-usuario/idealista-scraper
+APIFY_FOTOCASA_ACTOR=mi-usuario/fotocasa-scraper
+SEARCH_OPERATION=rent        # rent (alquiler) | sale (compraventa)
+APIFY_MAX_ITEMS=40           # tope por portal
+APIFY_TIMEOUT_SECONDS=300
+```
+
+El scraper envía al actor este input (`location`, `operation`, `maxItems` y, si están
+definidos, `minPrice`, `maxPrice`, `minSize`, `minRooms`). Si tu actor usa otros nombres
+de campo, ajústalo en `_build_run_input` en
+[`app/infrastructure/scrapers/apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py).
+
+El normalizador reconoce varias claves por campo (`url`/`link`/`detailUrl`,
+`price`/`priceEur`/`priceAmount`, `size`/`squareMeters`/`surface`, ...), así que la
+mayoría de actores funcionan sin cambios.
+
+## 5. Arrancar el servidor
+
+```bash
+uvicorn app.main:app --reload
+```
+
+| Recurso | URL |
+|---|---|
+| Swagger UI | <http://127.0.0.1:8000/docs> |
+| ReDoc | <http://127.0.0.1:8000/redoc> |
+| OpenAPI JSON | <http://127.0.0.1:8000/openapi.json> |
+| Health check | <http://127.0.0.1:8000/health> |
+
+Comprueba que está vivo:
+
+```bash
+curl http://127.0.0.1:8000/health
+# {"status":"ok","scheduler_enabled":true}
+```
+
+## 6. Recetas con curl
+
+### 6.0 Caso práctico: chalet con piscina y pádel
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/searches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "location": "Pozuelo de Alarcón",
+    "portals": ["idealista"],
+    "max_price_eur": 900000,
+    "min_rooms": 4,
+    "max_results": 40,
+    "preferences": "Chalet o casa independiente (no piso) con piscina y pista de padel, en urbanizacion"
+  }'
+```
+
+Resultado real de esa petición (4 anuncios, el mejor es un chalet con piscina):
+
+```json
+{
+  "scraped_count": 12,
+  "matched_count": 4,
+  "listings": [
+    {
+      "title": "Chalet adosado en Calle Emilio Coll, 22, Zona norte, Pozuelo de Alarcón",
+      "price_eur": 875000.0,
+      "size_m2": 210.0,
+      "rooms": 4,
+      "amenities": ["swimming_pool", "terrace", "air_conditioning", "storage_room"],
+      "relevance": 0.78
+    }
+  ]
+}
+```
+
+**Tres claves para que esta búsqueda funcione:**
+
+1. **Ubicación.** Madrid *Capital* apenas tiene chalets con piscina: son pisos. Los chalets
+   con piscina, pádel y urbanización están en la periferia (Pozuelo, Las Rozas, Majadahonda,
+   Boadilla, Villaviciosa). Si buscas `"Madrid Capital"` obtendrás `matched_count: 0`
+   legítimamente.
+2. **Preferencias vs. filtros.** Solo `location`, `portals`, `max_price_eur`, `min_size_m2`,
+   `min_rooms` y `max_results` se aplican como filtros duros. Lo que pongas en
+   `preferences` (piscina, pádel, urbanización, "no piso") lo evalúa el LLM y se traduce en
+   `relevance`; la aceptación depende de `RELEVANCE_THRESHOLD`.
+3. **Umbral.** Con extras raros (pista de pádel casi nunca se anuncia) usa
+   `RELEVANCE_THRESHOLD=0.5`; con criterios comunes, `0.6` o `0.7`.
+
+**Cómo se puntúa.** El LLM **solo puntúa** (0-1); la decisión de aceptar la toma el sistema
+comparando con `RELEVANCE_THRESHOLD`. Antes el modelo decidía un booleano y, al interpretar
+cada preferencia como excluyente, rechazaba chalets con piscina por no constar pádel.
+
+Referencia de la escala que se le pide al modelo:
+
+| `relevance` | Significado |
+|---|---|
+| 0.9-1.0 | Cumple el filtro y todas las preferencias |
+| 0.7-0.9 | Cumple el filtro y la mayoría de preferencias |
+| 0.5-0.7 | Cumple el filtro pero le faltan varios extras |
+| 0.3-0.5 | Cumple el filtro pero es otro tipo de vivienda |
+| 0.0-0.3 | Incumple el filtro o no es lo que se busca |
+
+Las `amenities` (`swimming_pool`, `garden`, `terrace`, `air_conditioning`, `lift`,
+`storage_room`) provienen de los flags del portal y se envían al LLM como datos
+verificados: si pides piscina y no aparece `swimming_pool`, el modelo sabe que no debe
+suponerla.
+
+### 6.1 Búsqueda completa
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/searches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "location": "Madrid",
+    "portals": ["idealista", "fotocasa"],
+    "max_price_eur": 1500,
+    "min_size_m2": 70,
+    "min_rooms": 2,
+    "max_results": 5,
+    "preferences": "luminoso, con ascensor, cerca del metro"
+  }'
+```
+
+Respuesta real (`201 Created`):
+
+```json
+{
+  "search_id": "329f986c-2bbd-405e-8ce6-8385428cac8d",
+  "criteria_fingerprint": "dcdf871823d12cc2cf1db9cb5f1fa1ffd66ae19224ae06b97cd8e1d87c2844b1",
+  "run_date": "2026-11-04",
+  "created_at": "2026-11-04T22:59:02.086200Z",
+  "trigger": "api",
+  "status": "completed",
+  "scraped_count": 2,
+  "matched_count": 2,
+  "discarded_count": 0,
+  "listings": [
+    {
+      "portal": "idealista",
+      "url": "https://www.idealista.com/inmueble/1/",
+      "title": "Piso luminoso en Chamberí",
+      "price_eur": 1200.0,
+      "price_per_m2": 15.0,
+      "size_m2": 80.0,
+      "rooms": 2,
+      "bathrooms": 1,
+      "location": "Madrid",
+      "relevance": 0.9,
+      "reason": "Encaja con los criterios"
+    }
+  ]
+}
+```
+
+### 6.2 Recuperar resultados previos
+
+```bash
+curl http://127.0.0.1:8000/api/v1/searches/329f986c-2bbd-405e-8ce6-8385428cac8d/results
+```
+
+### 6.3 Disparar el job diario manualmente
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/scheduled-searches/run
+```
+
+Primera llamada del día (`200`):
+
+```json
+{"executed": true, "reason": null, "result": { "...": "..." }}
+```
+
+Segunda llamada del mismo día (`200`, idempotente):
+
+```json
+{"executed": false, "reason": "already_executed_today", "result": null}
+```
+
+### 6.4 Propagar un `request_id` propio
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/searches \
+  -H "Content-Type: application/json" \
+  -H "X-Request-ID: mi-traza-001" \
+  -d '{"location":"Valencia"}'
+```
+
+El identificador aparece en la cabecera `X-Request-ID` de la respuesta y en todos los
+logs de esa petición.
+
+## 7. Cliente en Python
+
+```python
+import httpx
+
+BASE_URL = "http://127.0.0.1:8000/api/v1"
+
+criterios = {
+    "location": "Barcelona",
+    "portals": ["idealista", "fotocasa"],
+    "min_price_eur": 900,
+    "max_price_eur": 1600,
+    "min_size_m2": 65,
+    "min_rooms": 2,
+    "max_results": 20,
+    "preferences": "terraza y ascensor, evitar bajos",
+}
+
+with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    response = client.post("/searches", json=criterios)
+    response.raise_for_status()
+    result = response.json()
+
+    print(f"Búsqueda {result['search_id']}: {result['matched_count']} anuncios")
+    for item in result["listings"]:
+        print(
+            f"- {item['price_eur']:.0f} € | {item['size_m2']} m² | "
+            f"relevancia {item['relevance']:.2f} | {item['url']}"
+        )
+
+    # Recuperar más tarde
+    again = client.get(f"/searches/{result['search_id']}/results").json()
+    assert again["search_id"] == result["search_id"]
+```
+
+`timeout` alto: la búsqueda es **síncrona** e incluye el scraping (minutos) y la llamada
+al LLM. Para integraciones en producción, considera hacer la llamada en segundo plano
+desde tu cliente o disparar `/scheduled-searches/run`.
+
+## 8. Interpretar la respuesta
+
+| Campo | Significado |
+|---|---|
+| `search_id` | UUID de la ejecución. Úsalo para consultar los resultados después. |
+| `criteria_fingerprint` | SHA-256 estable de los criterios. Base de la idempotencia del job diario. |
+| `run_date` | Fecha local de ejecución (zona `TIMEZONE`). |
+| `created_at` | Timestamp UTC de creación. |
+| `trigger` | `api`, `scheduler` o `manual-job`. |
+| `scraped_count` | Anuncios devueltos por los portales tras los filtros duros (precio, m², habitaciones). |
+| `matched_count` | Anuncios que el LLM considera relevantes. |
+| `discarded_count` | `scraped_count - matched_count`. |
+| `listings[].relevance` | Puntuación 0.0-1.0 del clasificador. Usa `>= 0.8` como "encaje claro". |
+| `listings[].url` | **Enlace directo al anuncio en el portal**. Es el dato que abres en el navegador. |
+| `listings[].reason` | Justificación del LLM en español. |
+| `listings[].price_per_m2` | Precio/m² redondeado (mitad hacia arriba). `null` si falta la superficie. |
+
+El orden de `listings` es por relevancia descendente; a igual relevancia, precio ascendente.
+
+### 8.1 ¿Dónde se guardan los resultados?
+
+Cada búsqueda se persiste como **un fichero JSON por `search_id`** en `RESULTS_DIR`
+(por defecto `data/results/`):
+
+```
+data/results/
+├── 0c9ba77a-d604-463b-8bc0-d586fb6769bf.json
+└── 5e21c1b4-...json
+```
+
+Esos ficheros contienen los **enlaces de los anuncios** junto con su puntuación:
+
+```json
+{
+  "search_id": "0c9ba77a-d604-463b-8bc0-d586fb6769bf",
+  "run_date": "2026-11-05",
+  "trigger": "api",
+  "scraped_count": 8,
+  "matched_count": 2,
+  "criteria": { "location": "Pozuelo de Alarcón", "max_price_eur": 900000, "min_rooms": 4 },
+  "listings": [
+    {
+      "portal": "idealista",
+      "url": "https://www.idealista.com/inmueble/112983119/",
+      "title": "Chalet adosado en Calle Emilio Coll, 22, Zona norte, Pozuelo de Alarcón",
+      "price_eur": 875000.0,
+      "size_m2": 210.0,
+      "rooms": 4,
+      "amenities": ["swimming_pool", "terrace", "air_conditioning", "storage_room"],
+      "price_per_m2": 4166.67,
+      "relevance": 0.95,
+      "reason": "Chalet adosado en urbanización con piscina..."
+    }
+  ]
+}
+```
+
+Propiedades del almacenamiento:
+
+| Aspecto | Comportamiento |
+|---|---|
+| Sobrevive a reinicios | Sí: al arrancar se reconstruye el índice desde los ficheros. |
+| `GET /searches/{id}/results` | Funciona después de reiniciar (verificado). |
+| Idempotencia del job diario | Se conserva entre reinicios. |
+| Escritura | Atómica (fichero temporal + `os.replace`): nunca queda un JSON a medias. |
+| `raw` del portal | **No** se guarda (voluminoso y puede contener datos de contacto). |
+| Fichero corrupto | Se ignora con un `WARNING`; el resto sigue disponible. |
+| Solo memoria | `RESULTS_DIR=` (vacío) desactiva la persistencia. |
+
+Para abrir los enlaces guardados de la última búsqueda:
+
+```bash
+# PowerShell
+Get-ChildItem data/results/*.json |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 |
+  Get-Content |
+  ConvertFrom-Json |
+  ForEach-Object { $_.listings.url }
+```
+
+```bash
+# bash / jq
+jq -r '.listings[].url' "$(ls -t data/results/*.json | head -1)"
+```
+
+Los ficheros se escriben en `data/`, que está en `.gitignore`: no se versionan.
+
+El umbral mínimo para considerar un anuncio relevante es `RELEVANCE_THRESHOLD`
+(por defecto `0.6`, configurable en `.env`).
+
+## 9. Errores y cómo resolverlos
+
+Todos los errores comparten el mismo envoltorio:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "La petición no es válida",
+    "request_id": "32afd95b-f894-433c-a579-c2dd045ece19",
+    "details": {
+      "fields": [{"loc": ["body", "location"], "msg": "String should have at least 2 characters"}]
+    }
+  }
+}
+```
+
+| HTTP | `code` | Causa habitual | Solución |
+|---|---|---|---|
+| `422` | `VALIDATION_ERROR` | Body inválido, `min_price_eur > max_price_eur`, UUID mal formado | Corrige el campo señalado en `details.fields` |
+| `404` | `SEARCH_NOT_FOUND` | `search_id` inexistente (o `RESULTS_DIR` vacío y proceso reiniciado) | Relanza la búsqueda |
+| `502` | `SCRAPER_FAILURE` | Token de Apify inválido, actor inexistente, cuota agotada, timeout | Revisa `APIFY_TOKEN`, los IDs de actor y la cuota |
+| `503` | `CLASSIFIER_FAILURE` | Clave de DeepSeek inválida, cuota, respuesta no JSON | Revisa `DEEPSEEK_API_KEY` y `DEEPSEEK_MODEL` |
+| `500` | `CONFIGURATION_ERROR` | Faltan variables obligatorias | Rellena `.env` |
+| `500` | `INTERNAL_ERROR` | Fallo inesperado | Busca `unhandled_exception` en los logs con el `request_id` |
+
+Cómo depurar: toma el `request_id` de la respuesta y búscalo en los logs.
+
+```bash
+# los logs incluyen request_id, search_id, duration_ms y error_code
+uvicorn app.main:app 2>&1 | grep 32afd95b
+```
+
+## 10. Búsqueda diaria programada
+
+Se ejecuta a las **07:00** en la zona `TIMEZONE` (por defecto `Europe/Madrid`), arrancada
+en el `lifespan` de FastAPI.
+
+```dotenv
+ENABLE_SCHEDULER=true
+TIMEZONE=Europe/Madrid
+
+DAILY_SEARCH_LOCATION=Madrid
+DAILY_SEARCH_PORTALS=idealista,fotocasa
+DAILY_MAX_PRICE_EUR=1500
+DAILY_MIN_SIZE_M2=60
+DAILY_MIN_ROOMS=2
+DAILY_MAX_RESULTS=40
+DAILY_PREFERENCES=
+```
+
+**Idempotencia:** solo se ejecuta una vez por `(criteria_fingerprint, run_date)`. Si ya
+existe, se registra `scheduled_search_skipped_duplicate` (WARNING) y la petición devuelve
+`executed: false`. Cambiar cualquiera de los criterios diarios genera una nueva huella y
+permite una ejecución distinta el mismo día.
+
+**Desactivarlo** (por ejemplo si ejecutas varias réplicas y solo una debe llevar el cron):
+
+```dotenv
+ENABLE_SCHEDULER=false
+```
+
+El job nunca propaga excepciones: cualquier fallo se registra con `logger.exception` y
+`error_code` para no perder el error.
+
+## 11. Modo sin credenciales (tests)
+
+`ENVIRONMENT=test` omite la validación de credenciales, de modo que puedes explorar la API
+sin tokens (las llamadas reales a Apify/DeepSeek fallarán con `502`/`503`):
+
+```bash
+# PowerShell
+$env:ENVIRONMENT="test"; $env:ENABLE_SCHEDULER="false"; uvicorn app.main:app --reload
+```
+
+```bash
+# bash
+ENVIRONMENT=test ENABLE_SCHEDULER=false uvicorn app.main:app --reload
+```
+
+La suite completa no necesita red: los ports se sustituyen por fakes.
+
+```bash
+pytest
+pytest app/tests/test_api.py -v          # solo integración de la API
+pytest -k "scheduled" -v                 # solo el job diario
+```
+
+---
+
+## Resumen de variables
+
+| Variable | Por defecto | Obligatoria | Notas |
+|---|---|---|---|
+| `ENVIRONMENT` | `development` | no | `production` activa logs JSON |
+| `LOG_LEVEL` | `INFO` | no | |
+| `TIMEZONE` | `Europe/Madrid` | no | zona del cron |
+| `ENABLE_SCHEDULER` | `true` | no | |
+| `APIFY_TOKEN` | — | **sí** | |
+| `APIFY_IDEALISTA_ACTOR` | `idealista-scraper` | sí (valor real) | `usuario/actor` |
+| `APIFY_FOTOCASA_ACTOR` | `fotocasa-scraper` | sí (valor real) | `usuario/actor` |
+| `SEARCH_OPERATION` | `rent` | no | `rent` \| `sale` |
+| `APIFY_MAX_ITEMS` | `40` | no | 1-200 |
+| `APIFY_TIMEOUT_SECONDS` | `300` | no | 10-900 |
+| `APIFY_MAX_CHARGE_USD` | sin límite | no | tope de gasto por ejecución (USD) |
+| `DEEPSEEK_API_KEY` | — | **sí** | |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | no | |
+| `DEEPSEEK_MODEL` | `deepseek-flash` | no | |
+| `DEEPSEEK_TIMEOUT_SECONDS` | `60` | no | |
+| `RELEVANCE_THRESHOLD` | `0.6` | no | 0.0-1.0 |
+| `RESULTS_DIR` | `data/results` | no | directorio de JSON; vacío = solo memoria |
+| `DAILY_*` | ver sección 10 | no | criterios del cron |

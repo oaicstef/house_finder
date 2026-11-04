@@ -10,6 +10,9 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import dataclass
+from datetime import timedelta
+from decimal import Decimal
 from typing import Any, Callable, Mapping, Sequence
 
 from app.domain.exceptions import ScraperException
@@ -17,6 +20,9 @@ from app.domain.models import Listing, Portal, SearchCriteria
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["ApifyListingScraper"]
+
+#: Estados terminales de un run de Apify que implican que no hay datos utilizables.
+_FAILED_RUN_STATUSES = frozenset({"FAILED", "ABORTED", "TIMED-OUT"})
 
 #: Claves candidatas en el item crudo del actor -> campo normalizado.
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
@@ -26,8 +32,50 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "size": ("size", "squareMeters", "surface", "surfaceArea", "area", "constructedArea"),
     "rooms": ("rooms", "bedrooms", "roomCount"),
     "bathrooms": ("bathrooms", "bathroomCount"),
-    "location": ("location", "address", "city", "district", "place", "neighborhood"),
+    "location": ("address", "location", "city", "district", "place", "neighborhood"),
     "description": ("description", "body", "summary", "details"),
+}
+
+#: Comodidades que aportan los actores -> nombre canónico en el dominio.
+_AMENITY_FLAGS: dict[str, str] = {
+    "hasSwimmingPool": "swimming_pool",
+    "hasGarden": "garden",
+    "hasTerrace": "terrace",
+    "hasAirConditioning": "air_conditioning",
+    "hasLift": "lift",
+    "hasBoxRoom": "storage_room",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _PortalProfile:
+    """Traduce los conceptos del dominio al vocabulario de cada actor de Apify.
+
+    Los actores de Apify Store no comparten esquema: Idealista usa ``sale``/``homes``
+    con precios en string, Fotocasa usa ``buy``/``home`` con enteros y sin país.
+    """
+
+    operation_map: Mapping[str, str]
+    property_type: str
+    country: str | None
+    price_as_string: bool
+
+
+_PROFILES: dict[Portal, _PortalProfile] = {
+    Portal.IDEALISTA: _PortalProfile(
+        # Verificado contra igolaizola/idealista-scraper.
+        operation_map={"rent": "rent", "sale": "sale"},
+        property_type="homes",
+        country="es",
+        price_as_string=True,
+    ),
+    Portal.FOTOCASA: _PortalProfile(
+        # Verificado contra el esquema de igolaizola/fotocasa-scraper.
+        operation_map={"rent": "rent", "sale": "buy"},
+        property_type="home",
+        country=None,
+        price_as_string=False,
+    ),
 }
 
 _NUMBER_TOKEN = re.compile(r"-?\d[\d.,]*")
@@ -82,6 +130,60 @@ def _to_int(value: Any) -> int | None:
     return int(number) if number is not None else None
 
 
+def _suggested_title(item: Mapping[str, Any]) -> str | None:
+    """Algunos actores anidan el título en ``suggestedTexts.title``."""
+    texts = item.get("suggestedTexts")
+    if isinstance(texts, Mapping):
+        title = texts.get("title")
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+    return None
+
+
+def _extract_amenities(item: Mapping[str, Any]) -> tuple[str, ...]:
+    """Traduce los flags del portal a comodidades canónicas en español-legible."""
+    keys: dict[str, Any] = {}
+    features = item.get("features")
+    if isinstance(features, Mapping):
+        keys.update(features)
+    # Algunos actores ponen los flags en la raíz del item.
+    for flag in _AMENITY_FLAGS:
+        if flag in item:
+            keys.setdefault(flag, item[flag])
+
+    amenities: list[str] = []
+    for flag, name in _AMENITY_FLAGS.items():
+        if keys.get(flag) is True or str(keys.get(flag)).strip().lower() == "true":
+            amenities.append(name)
+    return tuple(amenities)
+
+
+def _as_int_string(value: float) -> str:
+    """``1400.0`` -> ``"1400"`` (los actores esperan strings sin decimales)."""
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def _dataset_id(run: Any) -> str | None:
+    """Extrae el id del dataset soportando el modelo ``Run`` de v3 y diccionarios."""
+    value = getattr(run, "default_dataset_id", None)
+    if value:
+        return str(value)
+    if isinstance(run, Mapping):
+        for key in ("defaultDatasetId", "default_dataset_id"):
+            value = run.get(key)
+            if value:
+                return str(value)
+    return None
+
+
+def _run_status(run: Any) -> str | None:
+    """Estado del run (``None`` si la implementación no lo expone)."""
+    status = getattr(run, "status", None)
+    if status is None and isinstance(run, Mapping):
+        status = run.get("status")
+    return str(status) if status is not None else None
+
+
 def _default_client_factory(token: str) -> Any:
     """Import perezoso del SDK: el módulo se puede importar sin apify instalado."""
     try:
@@ -105,6 +207,7 @@ class ApifyListingScraper:
         max_items: int = 40,
         timeout_seconds: int = 300,
         operation: str = "rent",
+        max_charge_usd: float | None = None,
         client_factory: Callable[[str], Any] = _default_client_factory,
         logger: Any | None = None,
     ) -> None:
@@ -113,14 +216,27 @@ class ApifyListingScraper:
         self._max_items = max_items
         self._timeout_seconds = timeout_seconds
         self._operation = operation
+        self._max_charge_usd = max_charge_usd
         self._client_factory = client_factory
         self._logger = logger or get_logger("app.scraper")
 
     async def fetch_listings(self, criteria: SearchCriteria) -> list[Listing]:
         listings: list[Listing] = []
         seen_urls: set[str] = set()
+        skipped: list[str] = []
 
         for portal in criteria.portals:
+            if not (self._actor_ids.get(portal) or "").strip():
+                # Un portal sin actor configurado no debe tumbar la búsqueda entera.
+                skipped.append(portal.value)
+                self._logger.warning(
+                    "scraper_portal_skipped",
+                    portal=portal.value,
+                    error_code=None,
+                    reason="actor_not_configured",
+                )
+                continue
+
             items = await self._fetch_portal(portal, criteria)
             for item in items:
                 listing = self._normalize(portal, item)
@@ -130,6 +246,12 @@ class ApifyListingScraper:
                     continue
                 seen_urls.add(listing.url)
                 listings.append(listing)
+
+        if skipped and len(skipped) == len(criteria.portals):
+            raise ScraperException(
+                "Ningún portal tiene un actor de Apify configurado",
+                details={"portals": skipped},
+            )
 
         return listings[: criteria.max_results]
 
@@ -141,7 +263,7 @@ class ApifyListingScraper:
                 details={"portal": portal.value},
             )
 
-        run_input = self._build_run_input(criteria)
+        run_input = self._build_run_input(criteria, portal)
         started = time.perf_counter()
         try:
             items = await asyncio.to_thread(self._run_actor, actor_id, run_input)
@@ -172,36 +294,75 @@ class ApifyListingScraper:
         )
         return items
 
-    def _build_run_input(self, criteria: SearchCriteria) -> dict[str, Any]:
+    def _build_run_input(self, criteria: SearchCriteria, portal: Portal) -> dict[str, Any]:
+        """Construye el input del actor según el vocabulario de cada portal.
+
+        ``min_rooms`` no se envía: no todos los actores lo soportan y una clave
+        desconocida hace fallar la validación del input. Se filtra en
+        ``_matches_hard_criteria``.
+        """
+        profile = _PROFILES[portal]
+        operation = profile.operation_map.get(self._operation, self._operation)
+        total_items = min(criteria.max_results, self._max_items)
+
         run_input: dict[str, Any] = {
+            "operation": operation,
+            "propertyType": profile.property_type,
             "location": criteria.location,
-            "operation": self._operation,
-            "maxItems": min(criteria.max_results, self._max_items),
+            "maxItems": total_items,
         }
-        optional = {
-            "minPrice": criteria.min_price_eur,
-            "maxPrice": criteria.max_price_eur,
-            "minSize": criteria.min_size_m2,
-            "minRooms": criteria.min_rooms,
-        }
-        run_input.update({key: value for key, value in optional.items() if value is not None})
+        if profile.country:
+            run_input["country"] = profile.country
+
+        def price(value: float) -> Any:
+            return _as_int_string(value) if profile.price_as_string else int(value)
+
+        if criteria.min_price_eur is not None:
+            run_input["minPrice"] = price(criteria.min_price_eur)
+        if criteria.max_price_eur is not None:
+            run_input["maxPrice"] = price(criteria.max_price_eur)
+        if criteria.min_size_m2 is not None:
+            run_input["minSize"] = (
+                _as_int_string(criteria.min_size_m2)
+                if profile.price_as_string
+                else int(criteria.min_size_m2)
+            )
         return run_input
 
     def _run_actor(self, actor_id: str, run_input: dict[str, Any]) -> list[dict[str, Any]]:
-        """Ejecución bloqueante del actor (se invoca dentro de un hilo)."""
+        """Ejecución bloqueante del actor (se invoca dentro de un hilo).
+
+        Usa la firma de ``apify-client`` v3: ``run_timeout`` (duración máxima del run)
+        y ``max_total_charge_usd`` (tope de gasto por ejecución).
+        """
         client = self._client_factory(self._token)
-        run = client.actor(actor_id).call(run_input=run_input, timeout_secs=self._timeout_seconds)
-        if not run:
+
+        call_kwargs: dict[str, Any] = {
+            "run_input": run_input,
+            "run_timeout": timedelta(seconds=self._timeout_seconds),
+        }
+        if self._max_charge_usd is not None:
+            call_kwargs["max_total_charge_usd"] = Decimal(str(self._max_charge_usd))
+
+        run = client.actor(actor_id).call(**call_kwargs)
+        if run is None:
             raise ScraperException(
                 "El actor de Apify no devolvió ninguna ejecución",
                 details={"actor_id": actor_id},
             )
 
-        dataset_id = run.get("defaultDatasetId") if isinstance(run, Mapping) else None
+        status = _run_status(run)
+        if status in _FAILED_RUN_STATUSES:
+            raise ScraperException(
+                f"La ejecución de Apify terminó en estado {status}",
+                details={"actor_id": actor_id, "status": status},
+            )
+
+        dataset_id = _dataset_id(run)
         if not dataset_id:
             raise ScraperException(
                 "La ejecución de Apify no expone un dataset de resultados",
-                details={"actor_id": actor_id},
+                details={"actor_id": actor_id, "status": status},
             )
 
         items: list[dict[str, Any]] = []
@@ -217,7 +378,7 @@ class ApifyListingScraper:
         if not isinstance(url, str) or not url.strip() or price is None or price <= 0:
             return None
 
-        title = _first_value(item, _FIELD_ALIASES["title"])
+        title = _first_value(item, _FIELD_ALIASES["title"]) or _suggested_title(item)
         location = _first_value(item, _FIELD_ALIASES["location"])
         description = _first_value(item, _FIELD_ALIASES["description"])
 
@@ -231,6 +392,7 @@ class ApifyListingScraper:
             rooms=_to_int(_first_value(item, _FIELD_ALIASES["rooms"])),
             bathrooms=_to_int(_first_value(item, _FIELD_ALIASES["bathrooms"])),
             description=str(description).strip() if description else None,
+            amenities=_extract_amenities(item),
             raw=dict(item),
         )
 

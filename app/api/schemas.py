@@ -92,6 +92,7 @@ class ListingResponse(BaseModel):
     rooms: int | None
     bathrooms: int | None
     location: str
+    amenities: list[str] = Field(default_factory=list)
     relevance: float
     reason: str
 
@@ -108,6 +109,7 @@ class ListingResponse(BaseModel):
             rooms=listing.rooms,
             bathrooms=listing.bathrooms,
             location=listing.location,
+            amenities=list(listing.amenities),
             relevance=scored.relevance,
             reason=scored.reason,
         )

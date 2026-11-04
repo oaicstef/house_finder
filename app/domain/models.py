@@ -63,6 +63,8 @@ class Listing:
     rooms: int | None = None
     bathrooms: int | None = None
     description: str | None = None
+    #: Comodidades detectadas en el anuncio (``swimming_pool``, ``garden``, ...).
+    amenities: tuple[str, ...] = ()
     # ``compare=False`` evita que datos arbitrarios intervengan en igualdad/hash.
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 

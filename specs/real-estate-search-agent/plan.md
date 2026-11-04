@@ -397,3 +397,94 @@ Evidencia de validación: `pytest` -> 63 passed; arranque con `uvicorn` verifica
 scheduler registrado como `cron[hour='7', minute='0']` con zona `Europe/Madrid`;
 `ConfigurationException` verificada al arrancar sin credenciales en `development`.
 
+## Revisión 2026-11-05
+
+Cambios derivados de validar el adaptador contra el **SDK real** (`apify-client` 3.4.0) y de
+la pregunta sobre el coste de Apify:
+
+1. **`apify-client` fijado a `>=3.0.0,<4.0.0`.** El rango anterior (`>=1.7.0`) permitía v1/v2,
+   cuya firma de `call()` es incompatible con la que usa el adaptador.
+2. **Corregido `ActorClient.call()`:** el parámetro `timeout_secs` **no existe** en v3 (se
+   llamaba `timeout_secs`, ahora `run_timeout: timedelta`). La llamada anterior habría
+   fallado con `TypeError`.
+3. **Corregido el acceso al dataset:** en v3 `call()` devuelve un modelo `Run`, **no un dict**,
+   por lo que `run.get("defaultDatasetId")` lanzaba `AttributeError`. Ahora se leen los
+   helpers `_dataset_id()` / `_run_status()`, que soportan el modelo v3
+   (`run.default_dataset_id`) y, por compatibilidad, diccionarios con `defaultDatasetId`.
+4. **Estados de run fallidos** (`FAILED`, `ABORTED`, `TIMED-OUT`) se traducen a
+   `ScraperException` con el `status` en `details`, en lugar de intentar leer un dataset vacío.
+5. **Nuevo `APIFY_MAX_CHARGE_USD`** (`Settings.apify_max_charge_usd` -> `max_total_charge_usd`
+   como `Decimal`): tope duro de gasto por ejecución, alineado con el modelo de precios de
+   Apify descrito en la guía.
+6. **Los fakes de test imitan ahora la forma real de v3** (objeto `Run` con
+   `default_dataset_id`), que es lo que habría detectado los puntos 2 y 3; se conserva un test
+   para la variante dict legacy.
+7. **Valor vacío en `.env` -> `None`** (`_blank_to_none`): `DAILY_MAX_PRICE_EUR=` ya no rompe
+   la carga de `Settings`.
+
+Evidencia: `pytest` -> 69 passed; verificación adicional ejecutando el scraper contra un
+`Run` real de `apify_client._models` (dataset leído correctamente, `run_timeout` de 300 s,
+`max_total_charge_usd` como `Decimal`, sin `timeout_secs`).
+
+## Revisión 2026-11-05 (b) — validación contra Apify y DeepSeek reales
+
+Primera ejecución contra las APIs reales (cuenta del usuario). Hallazgos y cambios:
+
+1. **`_build_run_input` no coincidía con ningún actor real.** Faltaban `propertyType` y
+   `country` (obligatorios en `igolaizola/idealista-scraper`) y se enviaba `minRooms`, que
+   ese actor no admite: el input se rechazaba. Ahora el input se construye por portal con
+   `_PortalProfile`, y `min_rooms` se aplica en `_matches_hard_criteria`.
+2. **Tipos por actor.** Idealista exige `minPrice`/`maxPrice`/`minSize` como **string**;
+   Fotocasa los espera **enteros** y usa `buy`/`home` en lugar de `sale`/`homes`. Un input
+   único no podía servir a ambos; de ahí los perfiles.
+3. **`property_type`/`country` como settings** se eliminaron: quedaron redundantes al
+   resolverse por perfil. No se añade configuración muerta.
+4. **Portales sin actor se omiten** (`scraper_portal_skipped`, WARNING) en vez de lanzar.
+   Antes, tener `APIFY_FOTOCASA_ACTOR` sin configurar tumbaba la búsqueda completa. Si
+   ninguno está configurado, se mantiene `ScraperException`.
+5. **El LLM ya no decide la aceptación.** Con `matches` en manos del modelo, cada
+   preferencia se trataba como excluyente y se rechazaban chalets con piscina por «no constar
+   pista de pádel» (0 de 12 aceptados con puntuaciones 0.22-0.68). Ahora el modelo **solo
+   puntúa** y el sistema compara con `RELEVANCE_THRESHOLD`: determinista y ajustable por
+   entorno. El prompt incorpora una escala explícita y aclara que las preferencias son
+   deseables, no excluyentes.
+6. **`Listing.amenities`**: el actor expone `features.hasSwimmingPool/hasGarden/hasTerrace/
+   hasAirConditioning/hasLift/hasBoxRoom`. Se normalizan a `swimming_pool`, `garden`, etc.,
+   se envían al LLM como datos verificados y se devuelven en la API (`ListingResponse`).
+   Es lo que permite responder con rigor a «con piscina».
+7. **`title` anidado**: el actor no tiene `title` plano (está en `suggestedTexts.title`) y
+   la ubicación vive en `address`. Ambos se extraen; antes el título salía como
+   «Vivienda sin título».
+
+Evidencia: `pytest` -> 78 passed. Ejecución real de la búsqueda del usuario
+(chalet, ≤900.000 €, 4+ hab., piscina y pádel, Pozuelo de Alarcón):
+`scraped=12, matched=4`, primer resultado chalet adosado de 875.000 €, 210 m², 4 hab., con
+`swimming_pool` y `relevance=0.78`. La misma consulta sobre «Madrid Capital» devuelve
+`matched=0` de forma legítima: en el centro no hay chalets con piscina.
+
+## Revisión 2026-11-05 (c) — persistencia de resultados
+
+Los resultados solo vivían en memoria, así que `GET /searches/{id}/results` devolvía `404`
+tras reiniciar (comportamiento reprodu­cido: guardar en un proceso y leer en otro daba
+`None`). Para un agente que busca a diario eso hacía inservible el histórico.
+
+1. **Nuevo `JsonFileListingRepository`** (`app/infrastructure/repositories/`): un fichero
+   `<RESULTS_DIR>/<search_id>.json` por búsqueda, con **los enlaces** (`url`), puntuación,
+   motivo y amenities de cada anuncio.
+2. **Índice reconstruido al arrancar**: `get_by_id` y `find_by_criteria_and_day` siguen
+   funcionando tras un reinicio, por lo que **la idempotencia del job diario se conserva**.
+3. **Escritura atómica** (temporal + `os.replace`): nunca queda un JSON a medias. Un
+   fichero corrupto se ignora con `WARNING` sin impedir el arranque.
+4. **`Listing.raw` no se persiste**: es voluminoso y puede contener datos de contacto.
+5. **`RESULTS_DIR`** (`Settings.results_dir`, por defecto `data/results`; vacío = solo
+   memoria). `build_container` elige el adaptador; ni servicios ni endpoints cambian (OCP).
+6. `data/` añadido a `.gitignore`.
+
+Evidencia: `pytest` -> 88 passed (10 nuevos del repositorio). Verificación real: búsqueda
+`201` que escribe `data/results/0c9ba77a-….json` con los dos enlaces de Idealista; una
+**segunda instancia** de la app (reinicio simulado) responde `GET /results` con `200` y los
+mismos enlaces, y `find_by_criteria_and_day` devuelve el resultado previo.
+
+
+
+

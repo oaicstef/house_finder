@@ -97,6 +97,41 @@ async def test_clamps_relevance_to_unit_interval() -> None:
     assert assessments[0].relevance == 1.0
 
 
+async def test_threshold_overrides_llm_matches_flag() -> None:
+    """El LLM solo puntúa: un `matches=true` con relevancia baja no se acepta."""
+    listing = make_listing()
+    payload = {
+        "assessments": [
+            {"listing_url": listing.url, "relevance": 0.3, "matches": True, "reason": "Dudoso"}
+        ]
+    }
+    client = _FakeLLMClient(json.dumps(payload))
+
+    assessments = await build_classifier(client).assess_listings(CRITERIA, [listing])
+
+    assert assessments[0].matches is False
+
+
+async def test_threshold_accepts_high_relevance_even_if_llm_says_no() -> None:
+    """Un `matches=false` con relevancia alta sí se acepta (preferencia ausente)."""
+    listing = make_listing()
+    payload = {
+        "assessments": [
+            {
+                "listing_url": listing.url,
+                "relevance": 0.68,
+                "matches": False,
+                "reason": "Chalet con piscina; no consta pista de pádel",
+            }
+        ]
+    }
+    client = _FakeLLMClient(json.dumps(payload))
+
+    assessments = await build_classifier(client).assess_listings(CRITERIA, [listing])
+
+    assert assessments[0].matches is True
+
+
 async def test_sends_model_and_json_response_format() -> None:
     listing = make_listing()
     payload = {"assessments": [{"listing_url": listing.url, "relevance": 0.8, "matches": True}]}

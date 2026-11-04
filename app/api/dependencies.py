@@ -24,6 +24,7 @@ from app.domain.ports import (
     SearchServiceProtocol,
 )
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
+from app.infrastructure.repositories.json_file_repository import JsonFileListingRepository
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
 from app.infrastructure.scrapers.apify_scraper import ApifyListingScraper
 
@@ -55,7 +56,12 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
     """Construye el grafo de dependencias con las implementaciones reales."""
     resolved = settings or get_settings()
 
-    repository: ListingRepository = InMemoryListingRepository()
+    repository: ListingRepository
+    if (resolved.results_dir or "").strip():
+        repository = JsonFileListingRepository(resolved.results_dir)
+    else:
+        repository = InMemoryListingRepository()
+
     scraper: ScraperPort = ApifyListingScraper(
         token=resolved.apify_token,
         actor_ids={
@@ -65,6 +71,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         max_items=resolved.apify_max_items,
         timeout_seconds=resolved.apify_timeout_seconds,
         operation=resolved.search_operation,
+        max_charge_usd=resolved.apify_max_charge_usd,
     )
     classifier: ClassifierPort = DeepSeekListingClassifier(
         api_key=resolved.deepseek_api_key,
