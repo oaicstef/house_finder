@@ -107,6 +107,7 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Endpoint compatible con OpenAI. |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | Modelo usado en la clasificación. |
 | `DAILY_SEARCH_*` | Madrid / 1500 € / 60 m² / 2 hab. | Criterios del job diario. |
+| `DAILY_MUST_HAVE` | vacío (sin filtro) | Requisitos obligatorios del job diario, separados por comas (`piscina,padel`). |
 | `RELEVANCE_THRESHOLD` | `0.6` | Umbral mínimo de relevancia para aceptar un anuncio. |
 | `RESULTS_DIR` | `data/results` | Directorio de resultados JSON (vacío = solo memoria). |
 

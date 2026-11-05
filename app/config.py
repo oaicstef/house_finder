@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     daily_min_rooms: int | None = 2
     daily_max_results: int = Field(default=40, ge=1, le=100)
     daily_preferences: str | None = None
+    #: Requisitos obligatorios del cron, separados por comas (vacío = sin filtro duro).
+    daily_must_have: str | None = None
 
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
@@ -76,6 +78,7 @@ class Settings(BaseSettings):
         "daily_min_size_m2",
         "daily_min_rooms",
         "daily_preferences",
+        "daily_must_have",
         mode="before",
     )
     @classmethod
@@ -135,7 +138,33 @@ class Settings(BaseSettings):
             min_rooms=self.daily_min_rooms,
             max_results=self.daily_max_results,
             preferences=preferences,
+            must_have=self._parse_daily_must_have(),
         )
+
+    def _parse_daily_must_have(self) -> tuple[str, ...]:
+        """Convierte ``DAILY_MUST_HAVE`` (lista separada por comas) en requisitos.
+
+        Raises:
+            ConfigurationException: si algún término no cumple el contrato de longitud
+                (2-40 caracteres) que también aplica la API.
+        """
+        terms: list[str] = []
+        seen: set[str] = set()
+        for raw_term in (self.daily_must_have or "").split(","):
+            term = raw_term.strip()
+            if not term:
+                continue
+            if not 2 <= len(term) <= 40:
+                raise ConfigurationException(
+                    "DAILY_MUST_HAVE contiene un requisito con longitud inválida "
+                    f"(2-40 caracteres): {term!r}",
+                    details={"invalid_requirement": term},
+                )
+            key = term.lower()
+            if key not in seen:
+                seen.add(key)
+                terms.append(term)
+        return tuple(terms)
 
 
 @lru_cache(maxsize=1)

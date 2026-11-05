@@ -515,6 +515,56 @@ adosados en Pau de Carabanchel (287 m² / 897.000 € y 225 m² / 898.000 €) c
 `relevance=1.0` y motivo «tiene piscina y pádel verificados». Sin `must_have`, el mismo
 filtro devolvía un chalet sin pádel con `relevance=0.85`.
 
+## Revisión 2026-11-05 (e) — requisitos obligatorios en el job diario (`DAILY_MUST_HAVE`)
+
+`must_have` solo existía en `POST /api/v1/searches`; la búsqueda diaria programada no
+tenía forma de exigirlo, así que el único camino era escribir «(Obligatorio)» dentro de
+`DAILY_PREFERENCES`, donde el LLM lo trataba como una preferencia blanda. Es la misma
+causa raíz que la revisión (d), pero en la configuración del cron.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Transporte del requisito | `DAILY_MUST_HAVE`, lista separada por comas | Coherente con `DAILY_SEARCH_PORTALS`; no rompe `.env` existentes (opcional, vacío = sin filtro). |
+| Dónde se parsea | `Settings.build_daily_criteria()` | El cron solo consume `SearchCriteria`; ni `ScheduledSearchService` ni los endpoints cambian (OCP). |
+| Validación | Términos de 2-40 caracteres, sin duplicados (case-insensitive) | Mismo contrato que `SearchCreateRequest.must_have`; un valor inválido falla al arrancar con `ConfigurationException`. |
+| Idempotencia | `must_have` ya forma parte de `SearchCriteria.fingerprint()` | Cambiar los requisitos diarios genera una huella nueva y permite una ejecución distinta el mismo día. |
+
+### Alcance
+
+- Dentro: `app/config.py`, `.env.example`, `README.md`, `docs/USAGE.md`, tests de config.
+- Fuera: cambios en el esquema HTTP, en el scraper o en el prompt del clasificador (ya
+  soportan `must_have` desde la revisión (d)); UI para editar criterios.
+
+### Plan de tests
+
+- `app/tests/test_config.py`: parseo con espacios/mayúsculas/duplicados, vacío -> `()`,
+  término demasiado corto o largo -> `ConfigurationException`, y huella distinta al
+  cambiar `DAILY_MUST_HAVE`.
+- Sin red: se instancia `Settings(_env_file=None, environment="test", ...)`.
+
+### Orden de implementación
+
+1. [x] `app/config.py` — campo `daily_must_have`, parseo y paso a `SearchCriteria` — *done* cuando `build_daily_criteria()` devuelve la tupla limpia.
+2. [x] `.env.example` + `README.md` + `docs/USAGE.md` — documentar la variable — *done* cuando aparece en la tabla y en la sección 10.
+3. [x] `app/tests/test_config.py` — cobertura del parseo y del fingerprint — *done* con `pytest` en verde.
+
+### Criterios de aceptación
+
+- [x] `DAILY_MUST_HAVE=piscina,padel` hace que el cron descarte anuncios sin esos términos.
+- [x] `DAILY_MUST_HAVE=` (vacío) mantiene el comportamiento anterior sin filtro duro.
+- [x] Un requisito inválido impide arrancar con un mensaje claro, no con `KeyError`.
+- [x] `pytest` en verde.
+
+### Evidencia
+
+`pytest` -> 117 passed (7 nuevos en `app/tests/test_config.py`). Verificación de
+comportamiento con el job real y fakes: criterios con `DAILY_MUST_HAVE=piscina,padel`
+sobre 2 anuncios (`con piscina y padel` / `solo piscina`) -> `scraped=2, matched=1`; la
+segunda ejecución del mismo día devuelve `None` (idempotencia intacta). Términos vacíos
+siguen produciendo `must_have=()` (sin filtro duro).
+
 
 
 

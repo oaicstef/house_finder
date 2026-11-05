@@ -571,7 +571,24 @@ DAILY_MIN_SIZE_M2=60
 DAILY_MIN_ROOMS=2
 DAILY_MAX_RESULTS=40
 DAILY_PREFERENCES=
+# Requisitos OBLIGATORIOS (AND), separados por comas. Vacío = sin filtro duro.
+# Ejemplo: piscina,padel
+DAILY_MUST_HAVE=
 ```
+
+**`DAILY_MUST_HAVE` vs `DAILY_PREFERENCES`:** `DAILY_MUST_HAVE` es un filtro **duro**
+antes del LLM (si el anuncio no menciona el término en título, descripción o comodidades,
+se descarta); `DAILY_PREFERENCES` solo suma relevancia. Para un chalet con piscina y
+pádel obligatorios:
+
+```dotenv
+DAILY_PREFERENCES=Chalet con piscina y pista de pádel
+DAILY_MUST_HAVE=piscina,padel
+```
+
+Los términos admiten espacios y no distinguen mayúsculas ni acentos; se aplica el mismo
+contrato que en la API (2-40 caracteres, sin duplicados). Un valor inválido impide
+arrancar con `CONFIGURATION_ERROR` y el término señalado en `details`.
 
 **Idempotencia:** solo se ejecuta una vez por `(criteria_fingerprint, run_date)`. Si ya
 existe, se registra `scheduled_search_skipped_duplicate` (WARNING) y la petición devuelve
@@ -634,3 +651,4 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `RELEVANCE_THRESHOLD` | `0.6` | no | 0.0-1.0 |
 | `RESULTS_DIR` | `data/results` | no | directorio de JSON; vacío = solo memoria |
 | `DAILY_*` | ver sección 10 | no | criterios del cron |
+| `DAILY_MUST_HAVE` | vacío | no | requisitos obligatorios del cron (`piscina,padel`) |
