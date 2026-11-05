@@ -468,6 +468,62 @@ async def test_idealista_numeric_url_adds_no_amenities() -> None:
     assert listings[0].amenities == ("terrace",)
 
 
+async def test_idealista_location_drops_the_province_suffix() -> None:
+    """Idealista no resuelve ``"Madrid, Madrid"``: recibe solo el municipio.
+
+    Reproducido en vivo: el actor responde ``location "Madrid, Madrid" not found`` con
+    status ``SUCCEEDED`` y 0 items, así que se quedaba sin anuncios en silencio.
+    """
+    client = _FakeClient([RAW_ITEM])
+
+    await build_scraper(client).fetch_listings(
+        SearchCriteria(location="Madrid, Madrid", portals=(Portal.IDEALISTA,))
+    )
+
+    assert client.calls[0]["run_input"]["location"] == "Madrid"
+
+
+async def test_fotocasa_location_is_passed_unchanged() -> None:
+    """Fotocasa resuelve ``"Madrid, Madrid"`` por sí mismo (buscador de sugerencias)."""
+    client = _FakeClient([REAL_FOTOCASA_ITEM])
+    scraper = build_scraper(client, actor_ids={Portal.FOTOCASA: "actor-fotocasa"})
+
+    await scraper.fetch_listings(
+        SearchCriteria(location="Madrid, Madrid", portals=(Portal.FOTOCASA,))
+    )
+
+    assert client.calls[0]["run_input"]["location"] == "Madrid, Madrid"
+
+
+async def test_warns_when_a_portal_returns_no_listings() -> None:
+    """Un portal vacío deja de ser invisible: WARNING con la ubicación resuelta."""
+    logger = RecordingLogger()
+    client = _FakeClient([], run_result=_FakeRun("ds-empty"))
+    scraper = build_scraper(client, logger=logger)
+
+    await scraper.fetch_listings(idealista_criteria())
+
+    event = logger.find("scraper_portal_returned_no_listings")
+    assert event is not None
+    assert event["level"] == "warning"
+    assert event["portal"] == "idealista"
+    assert event["location"] == "Madrid"
+
+
+async def test_logs_the_resolved_location_when_scraping() -> None:
+    logger = RecordingLogger()
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client, logger=logger)
+
+    await scraper.fetch_listings(
+        SearchCriteria(location="Madrid, Madrid", portals=(Portal.IDEALISTA,))
+    )
+
+    event = logger.find("listings_scraped")
+    assert event is not None
+    assert event["location"] == "Madrid"
+
+
 async def test_fotocasa_item_without_price_is_discarded() -> None:
     """Sin ``transaction.price`` el anuncio se descarta, no rompe la búsqueda."""
     broken = dict(REAL_FOTOCASA_ITEM, transaction={"type": "SALE", "price": None})

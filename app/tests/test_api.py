@@ -37,6 +37,30 @@ def test_create_search_returns_201_with_results(make_container: Any) -> None:
     assert response.headers["X-Request-ID"]
 
 
+def test_create_search_reports_portals_without_results(make_container: Any) -> None:
+    """Un portal vacío debe delatarse: antes la respuesta parecía completa."""
+    from app.domain.models import Portal
+
+    fotocasa = make_listing("https://www.fotocasa.es/inmueble/2/", portal=Portal.FOTOCASA)
+    container = make_container(scraper=FakeScraper([fotocasa]))
+
+    with make_client(container) as client:
+        response = client.post(
+            "/api/v1/searches",
+            json={"location": "Madrid, Madrid", "portals": ["idealista", "fotocasa"]},
+        )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["portals"] == [
+        {"portal": "idealista", "matched": 0},
+        {"portal": "fotocasa", "matched": 1},
+    ]
+    assert body["warnings"] == [
+        "idealista: sin anuncios; revisa el actor del portal y la ubicación"
+    ]
+
+
 def test_create_search_propagates_request_id_header(make_container: Any) -> None:
     with make_client(make_container()) as client:
         response = client.post(

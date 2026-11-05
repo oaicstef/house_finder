@@ -649,6 +649,89 @@ Item real de `igolaizola/fotocasa-scraper` (build `zQ6P2E7A5hwEubfcJ`, `SUCCEEDE
 - **Chalets reales** (`Pozuelo de Alarcón`, `minSize=200`): el slug confirma el hallazgo
   `…-jardin-terraza-trastero-piscina/…`, base de `_url_amenities`.
 
+## Revisión 2026-11-05 (g) — ubicación por portal y visibilidad de resultados parciales
+
+Reporte del usuario: con `"location": "Madrid, Madrid"` la respuesta traía **solo**
+anuncios de Fotocasa, ninguno de Idealista, y sin ningún aviso. Reproducido con los
+resultados persistidos: `scraped=20, matched=5`, los 5 de Fotocasa; las búsquedas
+anteriores con `"Madrid"` sí devolvían 30 candidatos de Idealista.
+
+### Causa raíz (verificada ejecutando el actor)
+
+El actor de Idealista **no resuelve** `"Madrid, Madrid"` ni `"madrid-capital"`:
+
+```
+ERROR Couldn't resolve locations error="location \"Madrid, Madrid\" not found"
+```
+
+Y aun así termina con `status: SUCCEEDED`, `exitCode: 0` y **0 items**. Para el scraper
+fue un éxito vacío: no hay excepción, no hay `WARNING` y el cliente recibe `201` con
+resultados parciales indistinguibles de una búsqueda completa. Fotocasa sí resuelve
+`"Madrid, Madrid"` (usa un buscador de sugerencias), de ahí la asimetría.
+
+| `location` enviada | Idealista | Fotocasa |
+|---|---|---|
+| `Madrid` | ✅ 2/2 items (`112998509`, 750 000 €, 325 m²) | ✅ |
+| `Madrid, Madrid` | ❌ 0 items, `SUCCEEDED` | ✅ |
+| `madrid-capital` | ❌ 0 items, `SUCCEEDED` | — |
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Formato de ubicación | `_PortalProfile.location_transform`: Idealista recibe el primer segmento (`"Madrid, Madrid"` → `"Madrid"`) | El formato `"Ciudad, Provincia"` es el que sugiere Fotocasa; el actor de Idealista solo entiende el nombre. La variación vive en el perfil del portal, como la de entrada/salida. |
+| Portal sin resultados | `WARNING` `scraper_portal_returned_no_listings` con la ubicación resuelta | Convierte un fallo silencioso en un evento accionable; es el único punto que conoce los items **crudos**. |
+| Visibilidad para el cliente | `SearchResult.portal_outcomes` (derivado, sin persistir) -> `portals` y `warnings` en `SearchResponse` | Se calcula de `criteria.portals` + `listings`, así que no cambia el contrato del puerto ni el JSON guardado (compatible hacia atrás). |
+| ¿Lanzar error si un portal devuelve 0? | No | Una búsqueda legítimamente vacía (p. ej. `must_have: ["padel"]`) no es un fallo; se informa, no se rompe. |
+
+### Alcance
+
+- Dentro: `apify_scraper.py` (transformación de ubicación + warning), `models.py`
+  (`PortalOutcome` + propiedad), `search_service.py` (warning por portal), `api/schemas.py`
+  (`portals`, `warnings`), docs y tests.
+- Fuera: reintentos automáticos con otra ubicación (coste duplicado), geocodificación
+  propia, cambios en el contrato de `ScraperPort`.
+
+### Plan de tests
+
+- `test_apify_scraper.py`: Idealista recibe `"Madrid"` cuando se pide `"Madrid, Madrid"`;
+  Fotocasa recibe la ubicación tal cual; `WARNING` cuando el actor devuelve 0 items;
+  el `INFO` incluye la ubicación resuelta.
+- `test_search_service.py`: `portal_outcomes` y `WARNING` cuando un portal no aporta.
+- `test_api.py`: `portals`/`warnings` en la respuesta `201`.
+- `test_json_file_repository.py`: un JSON antiguo sin esos campos sigue cargando.
+
+### Orden de implementación
+
+1. [x] `apify_scraper.py` — `location_transform` + logs — *done* cuando `"Madrid, Madrid"` llega como `"Madrid"` al actor de Idealista.
+2. [x] `models.py` + `search_service.py` — `PortalOutcome`, advertencias — *done* cuando el servicio registra el portal vacío.
+3. [x] `api/schemas.py` — `portals` + `warnings` — *done* cuando la respuesta los incluye.
+4. [x] docs + tests — *done* con `pytest` en verde.
+
+### Criterios de aceptación
+
+- [x] Una búsqueda con `"Madrid, Madrid"` incluye anuncios de Idealista.
+- [x] Si un portal devuelve 0, la respuesta lo delata (`portals`/`warnings` y `WARNING` en logs).
+- [x] Un JSON de resultados antiguo sigue leyéndose.
+- [x] `pytest` en verde.
+
+### Evidencia
+
+- `pytest` -> 130 passed (7 nuevos).
+- **Ejecución real con el body del usuario** (`"Madrid, Madrid"`, 900 000 €, 200 m², 4 hab.,
+  ambos portales, `maxItems=20`, `maxTotalChargeUsd=0.15`):
+
+  ```
+  listings_scraped portal=idealista location=Madrid        scraped_count=20
+  listings_scraped portal=fotocasa  location='Madrid, Madrid' scraped_count=20
+  TOTAL: 24 | idealista: 14 | fotocasa: 10
+  ```
+
+  Antes del cambio, Idealista devolvía 0 (actor `SUCCEEDED` con `location not found`).
+- **Retrocompatible**: el JSON guardado de la búsqueda fallida (`ce23002a…`) carga sin
+  cambios y ahora se autodiagnostica: `[('idealista', 0), ('fotocasa', 5)]` +
+  `idealista: sin anuncios; revisa el actor del portal y la ubicación`.
+
 
 
 

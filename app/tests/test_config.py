@@ -57,13 +57,18 @@ def test_invalid_daily_must_have_raises_configuration_exception(invalid_term: st
 
 
 def test_default_actors_are_usable_or_empty() -> None:
-    """Un default no puede ser un placeholder: un id inexistente devuelve 404."""
-    settings = build_settings()
+    """Un default no puede ser un placeholder: un id inexistente devuelve 404.
 
-    assert settings.apify_idealista_actor == "igolaizola/idealista-scraper"
-    assert "/" in settings.apify_idealista_actor
+    Se comprueba el valor declarado en el modelo y no ``Settings()``, porque ``.env``
+    se carga en ``os.environ`` al importar ``app.config``.
+    """
+    idealista = Settings.model_fields["apify_idealista_actor"].default
+    fotocasa = Settings.model_fields["apify_fotocasa_actor"].default
+
+    assert idealista == "igolaizola/idealista-scraper"
+    assert "/" in idealista
     # Fotocasa es pay-per-event: se omite salvo que el usuario lo active.
-    assert settings.apify_fotocasa_actor == ""
+    assert fotocasa == ""
 
 
 def test_daily_must_have_changes_the_criteria_fingerprint() -> None:

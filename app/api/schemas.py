@@ -20,6 +20,7 @@ __all__ = [
     "HealthResponse",
     "ListingResponse",
     "PortalName",
+    "PortalOutcomeResponse",
     "ScheduledRunResponse",
     "SearchCreateRequest",
     "SearchResponse",
@@ -142,6 +143,13 @@ class ListingResponse(BaseModel):
         )
 
 
+class PortalOutcomeResponse(BaseModel):
+    """Aportación de un portal: cuántos anuncios suyos acabaron en la respuesta."""
+
+    portal: str
+    matched: int
+
+
 class SearchResponse(BaseModel):
     """Resultado completo de una búsqueda."""
 
@@ -154,6 +162,17 @@ class SearchResponse(BaseModel):
     scraped_count: int
     matched_count: int
     discarded_count: int
+    portals: list[PortalOutcomeResponse] = Field(
+        default_factory=list,
+        description=(
+            "Anuncios aceptados por portal solicitado. Un portal con matched=0 "
+            "no aportó resultados (revisa warnings)."
+        ),
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Avisos legibles derivados del resultado (p. ej. portal sin anuncios).",
+    )
     listings: list[ListingResponse]
 
     @classmethod
@@ -167,6 +186,11 @@ class SearchResponse(BaseModel):
             scraped_count=result.scraped_count,
             matched_count=result.matched_count,
             discarded_count=result.discarded_count,
+            portals=[
+                PortalOutcomeResponse(portal=outcome.portal.value, matched=outcome.matched)
+                for outcome in result.portal_outcomes
+            ],
+            warnings=list(result.warnings),
             listings=[ListingResponse.from_domain(item) for item in result.listings],
         )
 

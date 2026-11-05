@@ -73,6 +73,8 @@ class _PortalProfile:
     title_builder: Callable[[Mapping[str, Any]], str | None] | None = None
     #: Compone la ubicación cuando el actor devuelve un objeto en vez de texto.
     location_builder: Callable[[Mapping[str, Any]], str | None] | None = None
+    #: Adapta la ubicación al formato que entiende el actor.
+    location_transform: Callable[[str], str] | None = None
 
 
 _NUMBER_TOKEN = re.compile(r"-?\d[\d.,]*")
@@ -169,6 +171,17 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
+def _idealista_location(value: str) -> str:
+    """Se queda con el primer segmento de ``"Ciudad, Provincia"``.
+
+    El actor de Idealista resuelve ``"Madrid"`` pero no ``"Madrid, Madrid"`` (lo
+    devuelve como *location not found* con status ``SUCCEEDED`` y 0 items). El
+    formato con provincia es el que sugiere Fotocasa, así que se tolera aquí.
+    """
+    head, _, _ = value.partition(",")
+    return head.strip() or value.strip()
+
+
 def _fotocasa_title(item: Mapping[str, Any]) -> str | None:
     """Compone ``Calle Montejurra 33, Ventas, Ciudad Lineal, Madrid``.
 
@@ -190,6 +203,7 @@ _PROFILES: dict[Portal, _PortalProfile] = {
         property_type="homes",
         country="es",
         price_as_string=True,
+        location_transform=_idealista_location,
     ),
     Portal.FOTOCASA: _PortalProfile(
         # Verificado en vivo contra igolaizola/fotocasa-scraper (build zQ6P2E7A5hwEubfcJ).
@@ -372,8 +386,22 @@ class ApifyListingScraper:
             portal=portal.value,
             actor_id=actor_id,
             scraped_count=len(items),
+            location=run_input.get("location"),
             duration_ms=duration_ms,
         )
+        if not items:
+            # El actor devuelve SUCCEEDED con 0 items cuando no resuelve la ubicación
+            # (p. ej. "Madrid, Madrid" en Idealista): sin este aviso, el portal
+            # desaparece en silencio de los resultados.
+            self._logger.warning(
+                "scraper_portal_returned_no_listings",
+                portal=portal.value,
+                actor_id=actor_id,
+                location=run_input.get("location"),
+                requested_location=criteria.location,
+                error_code=None,
+                duration_ms=duration_ms,
+            )
         return items
 
     def _build_run_input(self, criteria: SearchCriteria, portal: Portal) -> dict[str, Any]:
@@ -393,7 +421,11 @@ class ApifyListingScraper:
         run_input: dict[str, Any] = {
             "operation": operation,
             "propertyType": profile.property_type,
-            "location": criteria.location,
+            "location": (
+                profile.location_transform(criteria.location)
+                if profile.location_transform is not None
+                else criteria.location
+            ),
             "maxItems": total_items,
         }
         if profile.country:

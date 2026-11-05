@@ -20,6 +20,7 @@ __all__ = [
     "Listing",
     "ListingAssessment",
     "Portal",
+    "PortalOutcome",
     "ScoredListing",
     "SearchCriteria",
     "SearchResult",
@@ -165,6 +166,18 @@ class ScoredListing:
 
 
 @dataclass(frozen=True, slots=True)
+class PortalOutcome:
+    """Aportación de un portal a una búsqueda (para diagnóstico)."""
+
+    portal: Portal
+    matched: int
+
+    @property
+    def is_empty(self) -> bool:
+        return self.matched == 0
+
+
+@dataclass(frozen=True, slots=True)
 class SearchResult:
     """Resultado completo y persistible de una ejecución de búsqueda."""
 
@@ -181,3 +194,23 @@ class SearchResult:
     @property
     def matched_count(self) -> int:
         return len(self.listings)
+
+    @property
+    def portal_outcomes(self) -> tuple[PortalOutcome, ...]:
+        """Anuncios aceptados por cada portal solicitado, en el orden pedido."""
+        counts: dict[Portal, int] = {}
+        for scored in self.listings:
+            counts[scored.listing.portal] = counts.get(scored.listing.portal, 0) + 1
+        return tuple(
+            PortalOutcome(portal=portal, matched=counts.get(portal, 0))
+            for portal in self.criteria.portals
+        )
+
+    @property
+    def warnings(self) -> tuple[str, ...]:
+        """Avisos legibles derivados del resultado (p. ej. un portal vacío)."""
+        return tuple(
+            f"{outcome.portal.value}: sin anuncios; revisa el actor del portal y la ubicación"
+            for outcome in self.portal_outcomes
+            if outcome.is_empty
+        )

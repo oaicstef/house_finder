@@ -463,6 +463,8 @@ desde tu cliente o disparar `/scheduled-searches/run`.
 | `scraped_count` | Anuncios devueltos por los portales tras los filtros duros (precio, m², habitaciones). |
 | `matched_count` | Anuncios aceptados (cumplen `must_have` y superan `RELEVANCE_THRESHOLD`). |
 | `discarded_count` | `scraped_count - matched_count`. |
+| `portals` | Aportación de cada portal solicitado: `[{"portal": "idealista", "matched": 0}]`. Un `matched: 0` significa que ese portal no aportó nada. |
+| `warnings` | Avisos legibles; p. ej. `"idealista: sin anuncios; revisa el actor del portal y la ubicación"`. |
 | `listings[].relevance` | Puntuación 0.0-1.0 del clasificador. Usa `>= 0.8` como "encaje claro". |
 | `listings[].url` | **Enlace directo al anuncio en el portal**. Es el dato que abres en el navegador. |
 | `listings[].reason` | Justificación del LLM en español. |
@@ -574,6 +576,41 @@ Cómo depurar: toma el `request_id` de la respuesta y búscalo en los logs.
 # los logs incluyen request_id, search_id, duration_ms y error_code
 uvicorn app.main:app 2>&1 | grep 32afd95b
 ```
+
+### 9.1 La respuesta trae anuncios de un solo portal
+
+No es un error HTTP: la búsqueda termina `201` porque uno de los portales **sí** respondió.
+La respuesta lo delata:
+
+```json
+{
+  "scraped_count": 20,
+  "matched_count": 5,
+  "portals": [
+    {"portal": "idealista", "matched": 0},
+    {"portal": "fotocasa", "matched": 5}
+  ],
+  "warnings": ["idealista: sin anuncios; revisa el actor del portal y la ubicación"]
+}
+```
+
+Causas habituales, en orden de frecuencia:
+
+1. **La ubicación no existe para ese portal.** Los actores resuelven nombres propios, y
+   algunas formas compuestas fallan: Idealista **no** reconoce `"Madrid, Madrid"` ni
+   `"madrid-capital"`; sí `"Madrid"`. El actor termina en `SUCCEEDED` con 0 items (no
+   lanza excepción), de ahí que antes pasara desapercibido. El scraper ya recorta el
+   sufijo de provincia para Idealista, pero si usas un municipio poco común prueba con el
+   nombre suelto (`"Pozuelo de Alarcón"`, no `"Pozuelo de Alarcón, Madrid"`).
+2. **El actor del portal no está configurado** (`APIFY_FOTOCASA_ACTOR=` vacío): el portal
+   se omite con `scraper_portal_skipped`.
+3. **Los filtros son demasiado estrictos** para ese portal (`min_size_m2`, `min_rooms`,
+   `must_have`): el anuncio existe pero no se publica lo que exiges.
+
+En los logs, los eventos que lo explican son
+`scraper_portal_returned_no_listings` (el actor no devolvió nada, con la ubicación
+resuelta), `scraper_portal_skipped` (sin actor) y `search_portal_without_results` (hubo
+anuncios, pero ninguno pasó los filtros).
 
 ## 10. Búsqueda diaria programada
 

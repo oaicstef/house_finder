@@ -133,6 +133,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
 - `max_results` recorta la **respuesta**, no la búsqueda: el scraper pide hasta
   `APIFY_MAX_ITEMS` candidatos.
 - `must_have` es **obligatorio** (AND); `preferences` solo suma relevancia.
+- `location`: usa el nombre del municipio (`"Madrid"`). Idealista no resuelve formas
+  compuestas como `"Madrid, Madrid"` (se recorta automáticamente el sufijo de provincia).
+- La respuesta incluye `portals` (`[{"portal": "idealista", "matched": 0}]`) y `warnings`:
+  si un portal se queda a cero, lo verás ahí en lugar de recibir resultados parciales
+  silenciosos.
 
 Errores uniformes:
 

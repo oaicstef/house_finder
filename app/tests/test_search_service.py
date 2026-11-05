@@ -35,6 +35,54 @@ def build_service(
     return service, logger
 
 
+async def test_warns_when_a_requested_portal_contributes_nothing() -> None:
+    """Un portal sin anuncios aceptados se registra en WARNING, no en silencio."""
+    from app.domain.models import Portal
+
+    fotocasa = make_listing("https://www.fotocasa.es/inmueble/2/", portal=Portal.FOTOCASA)
+    service, logger = build_service(
+        FakeScraper([fotocasa]),
+        FakeClassifier(),
+        InMemoryListingRepository(logger=RecordingLogger()),
+    )
+
+    result = await service.run_search(
+        SearchCriteria(location="Madrid, Madrid", portals=(Portal.IDEALISTA, Portal.FOTOCASA))
+    )
+
+    assert [outcome.portal for outcome in result.portal_outcomes] == [
+        Portal.IDEALISTA,
+        Portal.FOTOCASA,
+    ]
+    assert [outcome.matched for outcome in result.portal_outcomes] == [0, 1]
+    event = logger.find("search_portal_without_results")
+    assert event is not None
+    assert event["level"] == "warning"
+    assert event["portal"] == "idealista"
+    assert event["location"] == "Madrid, Madrid"
+    assert result.warnings == (
+        "idealista: sin anuncios; revisa el actor del portal y la ubicación",
+    )
+
+
+async def test_no_portal_warning_when_every_portal_contributes() -> None:
+    from app.domain.models import Portal
+
+    idealista = make_listing("https://www.idealista.com/inmueble/1/")
+    service, logger = build_service(
+        FakeScraper([idealista]),
+        FakeClassifier(),
+        InMemoryListingRepository(logger=RecordingLogger()),
+    )
+
+    result = await service.run_search(
+        SearchCriteria(location="Madrid", portals=(Portal.IDEALISTA,))
+    )
+
+    assert "search_portal_without_results" not in logger.event_names()
+    assert result.warnings == ()
+
+
 async def test_run_search_returns_only_matching_listings_sorted_by_relevance() -> None:
     best = make_listing("https://www.idealista.com/inmueble/1/", price=1100.0)
     second = make_listing("https://www.fotocasa.es/inmueble/2/", price=1300.0)

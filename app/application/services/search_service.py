@@ -94,6 +94,19 @@ class SearchService:
                 discarded_count=result.discarded_count,
                 duration_ms=self._elapsed_ms(started),
             )
+            for outcome in result.portal_outcomes:
+                if not outcome.is_empty:
+                    continue
+                # Un portal puede quedar vacío sin lanzar error (ubicación no resuelta,
+                # filtros muy estrictos...); sin este aviso el resultado parece completo.
+                self._logger.warning(
+                    "search_portal_without_results",
+                    search_id=str(search_id),
+                    portal=outcome.portal.value,
+                    location=criteria.location,
+                    scraped_count=result.scraped_count,
+                    error_code=None,
+                )
             return result
         finally:
             structlog.contextvars.unbind_contextvars("search_id")
