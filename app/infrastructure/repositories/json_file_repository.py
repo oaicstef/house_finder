@@ -180,6 +180,7 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
             "min_rooms": criteria.min_rooms,
             "max_results": criteria.max_results,
             "preferences": criteria.preferences,
+            "must_have": list(criteria.must_have),
         },
         "listings": [
             {
@@ -213,6 +214,7 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
         min_rooms=criteria_payload.get("min_rooms"),
         max_results=criteria_payload.get("max_results", 40),
         preferences=criteria_payload.get("preferences"),
+        must_have=tuple(criteria_payload.get("must_have") or ()),
     )
     listings = tuple(
         ScoredListing(

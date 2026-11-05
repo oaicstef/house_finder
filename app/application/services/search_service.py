@@ -69,7 +69,8 @@ class SearchService:
         )
 
         try:
-            listings = await self._fetch(criteria, search_id, started)
+            fetched = await self._fetch(criteria, search_id, started)
+            listings = self._apply_requirements(fetched, criteria, search_id)
             scored = await self._classify(criteria, listings, search_id)
 
             result = SearchResult(
@@ -80,8 +81,8 @@ class SearchService:
                 created_at=self._now(),
                 trigger=Trigger(trigger),
                 listings=tuple(scored),
-                scraped_count=len(listings),
-                discarded_count=max(len(listings) - len(scored), 0),
+                scraped_count=len(fetched),
+                discarded_count=max(len(fetched) - len(scored), 0),
             )
 
             await self._repository.save(result)
@@ -135,6 +136,31 @@ class SearchService:
             duration_ms=self._elapsed_ms(started),
         )
         return listings
+
+    def _apply_requirements(
+        self,
+        listings: list[Listing],
+        criteria: SearchCriteria,
+        search_id: UUID,
+    ) -> list[Listing]:
+        """Filtro duro de ``must_have``: aquí sí son obligatorios, no "deseables".
+
+        Se aplica antes del LLM para no gastar tokens en anuncios que el usuario ha
+        excluido explícitamente.
+        """
+        if not criteria.must_have:
+            return listings
+
+        kept = [listing for listing in listings if listing.satisfies_all(criteria.must_have)]
+        dropped = len(listings) - len(kept)
+        self._logger.info(
+            "listings_filtered_by_requirements",
+            search_id=str(search_id),
+            must_have=list(criteria.must_have),
+            kept_count=len(kept),
+            dropped_count=dropped,
+        )
+        return kept
 
     async def _classify(
         self,

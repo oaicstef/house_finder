@@ -12,10 +12,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from uuid import UUID
 
 __all__ = [
+    "AMENITY_LABELS",
     "Listing",
     "ListingAssessment",
     "Portal",
@@ -23,6 +24,7 @@ __all__ = [
     "SearchCriteria",
     "SearchResult",
     "Trigger",
+    "normalize_text",
 ]
 
 
@@ -48,6 +50,24 @@ class Trigger(str, Enum):
     API = "api"
     SCHEDULER = "scheduler"
     MANUAL_JOB = "manual-job"
+
+
+#: Nombre canónico de comodidad -> términos con los que el portal/usuario la nombra.
+AMENITY_LABELS: dict[str, tuple[str, ...]] = {
+    "swimming_pool": ("piscina", "piscinas"),
+    "garden": ("jardin", "jardines", "zona ajardinada"),
+    "terrace": ("terraza", "terrazas"),
+    "air_conditioning": ("aire acondicionado", "climatizacion"),
+    "lift": ("ascensor", "elevador"),
+    "storage_room": ("trastero", "trasteros"),
+}
+
+_ACCENTS = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
+
+
+def normalize_text(text: str) -> str:
+    """Minúsculas y sin acentos, para comparar términos de forma tolerante."""
+    return text.translate(_ACCENTS).lower()
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +97,20 @@ class Listing:
         value = Decimal(str(self.price_eur)) / Decimal(str(self.size_m2))
         return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
+    @property
+    def searchable_text(self) -> str:
+        """Texto donde buscar requisitos: título, descripción y amenities etiquetadas."""
+        labels = " ".join(
+            label for amenity in self.amenities for label in AMENITY_LABELS.get(amenity, ())
+        )
+        return normalize_text(f"{self.title} {self.description or ''} {labels}")
+
+    def satisfies_all(self, terms: Sequence[str]) -> bool:
+        """¿Cumple *todos* los requisitos exigidos? (semántica AND)."""
+        haystack = self.searchable_text
+        return all(normalize_text(term) in haystack for term in terms)
+
+
 
 @dataclass(frozen=True, slots=True)
 class SearchCriteria:
@@ -90,6 +124,9 @@ class SearchCriteria:
     min_rooms: int | None = None
     max_results: int = 40
     preferences: str | None = None
+    #: Requisitos obligatorios (p. ej. ``("padel", "piscina")``). Se comprueban
+    #: contra título, descripción y amenities; si falta alguno, se descarta.
+    must_have: tuple[str, ...] = ()
 
     def fingerprint(self) -> str:
         """Huella estable (sha256) para la idempotencia del job diario."""
@@ -102,6 +139,7 @@ class SearchCriteria:
             "min_rooms": self.min_rooms,
             "max_results": self.max_results,
             "preferences": (self.preferences or "").strip().lower() or None,
+            "must_have": sorted(normalize_text(term) for term in self.must_have),
         }
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

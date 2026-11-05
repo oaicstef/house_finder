@@ -485,6 +485,37 @@ Evidencia: `pytest` -> 88 passed (10 nuevos del repositorio). Verificación real
 **segunda instancia** de la app (reinicio simulado) responde `GET /results` con `200` y los
 mismos enlaces, y `find_by_criteria_and_day` devuelve el resultado previo.
 
+## Revisión 2026-11-05 (d) — requisitos obligatorios (`must_have`)
+
+El usuario reportó que, pidiendo «Chalet, padel, piscina», el resultado no tenía pista de
+pádel. Diagnóstico: (a) todo era "preferencia" blanda, así que el umbral aceptaba anuncios
+sin pádel; y (b) un fallo de recorte hacía que apenas se exploraran candidatos.
+
+1. **Causa raíz del recorte**: `fetch_listings` terminaba con
+   `listings[: criteria.max_results]`, y además `maxItems` se calculaba como
+   `min(max_results, apify_max_items)`. Con `max_results: 5` se pedían **5** anuncios al
+   actor y se recortaban a **5** antes de filtrar (el actor devolvía 53 y 30 pasaban el
+   filtro duro). Ahora el scraper pide `APIFY_MAX_ITEMS` y **no trunca**: `max_results`
+   solo recorta la respuesta final en `SearchService`.
+2. **Nuevo `must_have: list[str]`** en `SearchCreateRequest` -> `SearchCriteria.must_have`.
+   Filtro duro (AND) aplicado antes del LLM: descarta el anuncio si no menciona el término
+   en título, descripción o comodidades etiquetadas. Evita gastar tokens en lo excluido.
+3. **`Listing.satisfies_all` / `normalize_text`** (dominio puro): comparación sin acentos
+   ni mayúsculas, y `swimming_pool` cuenta como «piscina» vía `AMENITY_LABELS`. Así
+   `"padel"` encuentra `"pista pádel"` y `"piscina"` encuentra el flag del portal.
+4. **`must_have` entra en el fingerprint**: cambiar los requisitos invalida la idempotencia
+   del día, como debe ser.
+5. **`verified_requirements` en el prompt**: se indica al LLM qué requisitos ya se han
+   comprobado, para que el `reason` no diga «falta pista de pádel» cuando sí la tiene.
+6. **Persistencia**: `must_have` se serializa en el JSON del repositorio.
+
+Evidencia: `pytest` -> 110 passed (22 nuevos). Petición real del usuario con
+`must_have: ["padel", "piscina"]` sobre Madrid: `scraped=30, matched=2`, ambos chalets
+adosados en Pau de Carabanchel (287 m² / 897.000 € y 225 m² / 898.000 €) con
+`relevance=1.0` y motivo «tiene piscina y pádel verificados». Sin `must_have`, el mismo
+filtro devolvía un chalet sin pádel con `relevance=0.85`.
+
+
 
 
 

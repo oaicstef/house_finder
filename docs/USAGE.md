@@ -240,54 +240,59 @@ curl http://127.0.0.1:8000/health
 
 ### 6.0 Caso práctico: chalet con piscina y pádel
 
+**Si el pádel es imprescindible, no lo pongas solo en `preferences`: usa `must_have`.**
+`preferences` es una sugerencia para el LLM (afecta a la puntuación); `must_have` es un
+filtro **duro** que descarta el anuncio si no lo menciona.
+
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/searches \
   -H "Content-Type: application/json" \
   -d '{
-    "location": "Pozuelo de Alarcón",
+    "location": "Madrid",
     "portals": ["idealista"],
     "max_price_eur": 900000,
+    "min_size_m2": 200,
     "min_rooms": 4,
-    "max_results": 40,
-    "preferences": "Chalet o casa independiente (no piso) con piscina y pista de padel, en urbanizacion"
+    "max_results": 5,
+    "preferences": "Chalet, padel, piscina",
+    "must_have": ["padel", "piscina"]
   }'
 ```
 
-Resultado real de esa petición (4 anuncios, el mejor es un chalet con piscina):
+Resultado real (`scraped=30, matched=2`):
 
 ```json
-{
-  "scraped_count": 12,
-  "matched_count": 4,
-  "listings": [
-    {
-      "title": "Chalet adosado en Calle Emilio Coll, 22, Zona norte, Pozuelo de Alarcón",
-      "price_eur": 875000.0,
-      "size_m2": 210.0,
-      "rooms": 4,
-      "amenities": ["swimming_pool", "terrace", "air_conditioning", "storage_room"],
-      "relevance": 0.78
-    }
-  ]
-}
+[
+  {
+    "price_eur": 897000.0,
+    "size_m2": 287.0,
+    "rooms": 5,
+    "title": "Chalet adosado en Calle Sous de Plata, Pau de Carabanchel, Madrid",
+    "url": "https://www.idealista.com/inmueble/105237601/",
+    "relevance": 1.0,
+    "reason": "... y tiene piscina y pádel verificados."
+  }
+]
 ```
 
-**Tres claves para que esta búsqueda funcione:**
+**Cómo se comprueba `must_have`** ([`Listing.satisfies_all`](../app/domain/models.py)):
 
-1. **Ubicación.** Madrid *Capital* apenas tiene chalets con piscina: son pisos. Los chalets
-   con piscina, pádel y urbanización están en la periferia (Pozuelo, Las Rozas, Majadahonda,
-   Boadilla, Villaviciosa). Si buscas `"Madrid Capital"` obtendrás `matched_count: 0`
-   legítimamente.
-2. **Preferencias vs. filtros.** Solo `location`, `portals`, `max_price_eur`, `min_size_m2`,
-   `min_rooms` y `max_results` se aplican como filtros duros. Lo que pongas en
-   `preferences` (piscina, pádel, urbanización, "no piso") lo evalúa el LLM y se traduce en
-   `relevance`; la aceptación depende de `RELEVANCE_THRESHOLD`.
-3. **Umbral.** Con extras raros (pista de pádel casi nunca se anuncia) usa
-   `RELEVANCE_THRESHOLD=0.5`; con criterios comunes, `0.6` o `0.7`.
+- Busca cada término en **título + descripción + comodidades etiquetadas**.
+- Ignora acentos y mayúsculas: `"padel"` encuentra `"pista pádel"`.
+- Las comodidades del portal cuentan con sinónimos: `swimming_pool` → `piscina`,
+  `garden` → `jardín`, `lift` → `ascensor`, etc.
+- Semántica **AND**: deben cumplirse **todos** los términos.
 
-**Cómo se puntúa.** El LLM **solo puntúa** (0-1); la decisión de aceptar la toma el sistema
-comparando con `RELEVANCE_THRESHOLD`. Antes el modelo decidía un booleano y, al interpretar
-cada preferencia como excluyente, rechazaba chalets con piscina por no constar pádel.
+| Necesitas | Dónde ponerlo |
+|---|---|
+| Precio, m², habitaciones | Campos dedicados (`max_price_eur`, `min_size_m2`, `min_rooms`) |
+| Piscina, jardín, terraza, ascensor, trastero | `must_have` (o el campo dedicado, si existe) |
+| Pádel u otros extras del texto libre | `must_have` |
+| Gustos que solo deben puntuar | `preferences` |
+
+> **El pádel es raro.** De ~30 candidatos en Madrid solo 1-2 lo mencionan. Por eso:
+> sube `APIFY_MAX_ITEMS` (100 o más) para tener más candidatos, y recuerda que
+> `max_results` solo recorta la respuesta final, no lo que se busca.
 
 Referencia de la escala que se le pide al modelo:
 
@@ -436,7 +441,7 @@ desde tu cliente o disparar `/scheduled-searches/run`.
 | `created_at` | Timestamp UTC de creación. |
 | `trigger` | `api`, `scheduler` o `manual-job`. |
 | `scraped_count` | Anuncios devueltos por los portales tras los filtros duros (precio, m², habitaciones). |
-| `matched_count` | Anuncios que el LLM considera relevantes. |
+| `matched_count` | Anuncios aceptados (cumplen `must_have` y superan `RELEVANCE_THRESHOLD`). |
 | `discarded_count` | `scraped_count - matched_count`. |
 | `listings[].relevance` | Puntuación 0.0-1.0 del clasificador. Usa `>= 0.8` como "encaje claro". |
 | `listings[].url` | **Enlace directo al anuncio en el portal**. Es el dato que abres en el navegador. |

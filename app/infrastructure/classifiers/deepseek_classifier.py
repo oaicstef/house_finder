@@ -31,6 +31,8 @@ _SYSTEM_PROMPT = (
     "- Usa exactamente las URLs recibidas (no inventes ninguna) y evalúa todos los anuncios.\n"
     "- El campo 'amenities' lista comodidades verificadas por el portal: si el usuario pide "
     "piscina y 'swimming_pool' no aparece, no asumas que la tiene.\n"
+    "- 'verified_requirements' son requisitos que YA se han comprobado contra el anuncio "
+    "completo: dalos por cumplidos y no los eches en falta en el motivo.\n"
     "- 'relevance' es una puntuación gradual, NO un sí/no. Guíate por esta escala: "
     "0.9-1.0 = cumple los criterios del filtro y todas las preferencias; "
     "0.7-0.9 = cumple el filtro y la mayoría de las preferencias (falta algún extra); "
@@ -85,6 +87,7 @@ class DeepSeekListingClassifier:
                 "min_size_m2": criteria.min_size_m2,
                 "min_rooms": criteria.min_rooms,
                 "preferences": criteria.preferences,
+                "must_have": list(criteria.must_have),
             },
             "listings": [
                 {
@@ -98,6 +101,9 @@ class DeepSeekListingClassifier:
                     "location": listing.location,
                     "price_per_m2": listing.price_per_m2,
                     "amenities": list(listing.amenities),
+                    "verified_requirements": [
+                        term for term in criteria.must_have if listing.satisfies_all((term,))
+                    ],
                     "description": (listing.description or "")[:600],
                 }
                 for listing in listings

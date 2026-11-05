@@ -157,6 +157,42 @@ async def test_builds_run_input_from_criteria() -> None:
     assert "timeout_secs" not in client.calls[0]
 
 
+async def test_scraper_does_not_truncate_candidates_to_max_results() -> None:
+    """El recorte a `max_results` es del servicio, no del scraper.
+
+    Si el scraper truncara, los filtros de requisitos y el clasificador nunca verían
+    más anuncios que los devueltos al cliente.
+    """
+    items = [dict(RAW_ITEM, url=f"https://www.idealista.com/inmueble/{index}/") for index in range(10)]
+    client = _FakeClient(items)
+    criteria = SearchCriteria(location="Madrid", portals=(Portal.IDEALISTA,), max_results=3)
+
+    listings = await build_scraper(client).fetch_listings(criteria)
+
+    assert len(listings) == 10
+
+
+async def test_max_items_is_not_capped_by_max_results() -> None:
+    """Pedir 5 resultados no debe limitar el scraping a 5 candidatos."""
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client, max_items=40)
+    criteria = SearchCriteria(location="Madrid", portals=(Portal.IDEALISTA,), max_results=5)
+
+    await scraper.fetch_listings(criteria)
+
+    assert client.calls[0]["run_input"]["maxItems"] == 40
+
+
+async def test_max_items_respects_the_apify_cap() -> None:
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client, max_items=25)
+    criteria = SearchCriteria(location="Madrid", portals=(Portal.IDEALISTA,), max_results=100)
+
+    await scraper.fetch_listings(criteria)
+
+    assert client.calls[0]["run_input"]["maxItems"] == 25
+
+
 async def test_run_input_omits_unset_optional_filters() -> None:
     client = _FakeClient([RAW_ITEM])
 

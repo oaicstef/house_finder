@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from app.domain.exceptions import ClassifierException
-from app.domain.models import SearchCriteria
+from app.domain.models import Listing, Portal, SearchCriteria
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
 from app.tests.conftest import RecordingLogger, make_listing
 
@@ -130,6 +130,30 @@ async def test_threshold_accepts_high_relevance_even_if_llm_says_no() -> None:
     assessments = await build_classifier(client).assess_listings(CRITERIA, [listing])
 
     assert assessments[0].matches is True
+
+
+async def test_payload_includes_verified_requirements() -> None:
+    """El LLM debe saber qué requisitos ya se comprobaron, para no "echarlos en falta"."""
+    listing = Listing(
+        portal=Portal.IDEALISTA,
+        url="https://www.idealista.com/inmueble/1/",
+        title="Chalet adosado en Pau de Carabanchel",
+        price_eur=880000.0,
+        location="Madrid",
+        size_m2=225.0,
+        rooms=5,
+        description="Zona común con piscinas y pista pádel.",
+        amenities=("swimming_pool",),
+    )
+    payload = {"assessments": [{"listing_url": listing.url, "relevance": 0.9}]}
+    client = _FakeLLMClient(json.dumps(payload))
+    criteria = SearchCriteria(location="Madrid", must_have=("padel", "piscina"))
+
+    await build_classifier(client).assess_listings(criteria, [listing])
+
+    sent = json.loads(client.completions.requests[0]["messages"][1]["content"])
+    assert sent["listings"][0]["verified_requirements"] == ["padel", "piscina"]
+    assert sent["criteria"]["must_have"] == ["padel", "piscina"]
 
 
 async def test_sends_model_and_json_response_format() -> None:

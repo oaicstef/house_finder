@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.models import Portal, ScoredListing, SearchCriteria, SearchResult
 
@@ -49,6 +49,32 @@ class SearchCreateRequest(BaseModel):
         max_length=1000,
         examples=["Piso luminoso, con ascensor, cerca del metro"],
     )
+    must_have: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Requisitos OBLIGATORIOS (semántica AND). Se buscan en título, descripción y "
+            "comodidades; si un anuncio no los menciona, se descarta antes del LLM. "
+            "Ejemplos: ['padel', 'piscina', 'chalet']."
+        ),
+        examples=[["padel", "piscina"]],
+    )
+
+    @field_validator("must_have")
+    @classmethod
+    def _clean_must_have(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            term = (value or "").strip()
+            if not term:
+                continue
+            if len(term) < 2:
+                raise ValueError("cada requisito debe tener al menos 2 caracteres")
+            if len(term) > 40:
+                raise ValueError("cada requisito no puede superar 40 caracteres")
+            if term.lower() not in {item.lower() for item in cleaned}:
+                cleaned.append(term)
+        return cleaned
 
     @model_validator(mode="after")
     def _check_price_range(self) -> Self:
@@ -77,6 +103,7 @@ class SearchCreateRequest(BaseModel):
             min_rooms=self.min_rooms,
             max_results=self.max_results,
             preferences=self.preferences,
+            must_have=tuple(self.must_have),
         )
 
 

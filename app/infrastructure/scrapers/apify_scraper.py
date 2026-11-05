@@ -253,7 +253,10 @@ class ApifyListingScraper:
                 details={"portals": skipped},
             )
 
-        return listings[: criteria.max_results]
+        # Se devuelven TODOS los candidatos (acotados por ``max_items``): recortar aquí
+        # a ``max_results`` impediría que los filtros posteriores (must_have) y el
+        # clasificador vieran más opciones que las estrictamente devueltas al cliente.
+        return listings
 
     async def _fetch_portal(self, portal: Portal, criteria: SearchCriteria) -> list[dict[str, Any]]:
         actor_id = (self._actor_ids.get(portal) or "").strip()
@@ -303,7 +306,10 @@ class ApifyListingScraper:
         """
         profile = _PROFILES[portal]
         operation = profile.operation_map.get(self._operation, self._operation)
-        total_items = min(criteria.max_results, self._max_items)
+        # Se piden candidatos hasta APIFY_MAX_ITEMS, no solo `max_results`: si se
+        # pidieran 5 anuncios para devolver 5, cualquier filtro posterior dejaría la
+        # búsqueda vacía. `max_results` solo recorta la respuesta final.
+        total_items = self._max_items
 
         run_input: dict[str, Any] = {
             "operation": operation,

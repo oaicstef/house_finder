@@ -22,7 +22,7 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 POST /api/v1/searches
    │
    ├─ 1. Apify        → scrapea Idealista y Fotocasa, devuelve anuncios crudos en JSON
-   ├─ 2. Filtro duro  → descarta por precio / m² / habitaciones (barato, en origen)
+      ├─ 2. Filtro duro  → descarta por precio / m² / habitaciones y por `must_have`
    ├─ 3. DeepSeek     → puntúa cada anuncio: relevance 0-1 + reason
    └─ 4. Repositorio  → guarda el resultado y responde 201
 ```
@@ -125,8 +125,13 @@ Ejemplo:
 curl -X POST http://127.0.0.1:8000/api/v1/searches \
   -H "Content-Type: application/json" \
   -d '{"location":"Madrid","max_price_eur":1500,"min_size_m2":70,"min_rooms":2,
+       "must_have":["piscina"],
        "preferences":"luminoso, con ascensor, cerca del metro"}'
 ```
+
+- `max_results` recorta la **respuesta**, no la búsqueda: el scraper pide hasta
+  `APIFY_MAX_ITEMS` candidatos.
+- `must_have` es **obligatorio** (AND); `preferences` solo suma relevancia.
 
 Errores uniformes:
 
