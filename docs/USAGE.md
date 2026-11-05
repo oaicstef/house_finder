@@ -186,22 +186,42 @@ Ambos comparten `location`, `maxItems` y `minPrice`/`maxPrice`/`minSize`. Los po
 **sin actor configurado se omiten** con un `WARNING` (`scraper_portal_skipped`) en lugar de
 tumbar la búsqueda; si ninguno está configurado, se lanza `ScraperException`.
 
-> **Fotocasa**: el mapeo de *entrada* está implementado, pero su *salida* usa otra forma
-> (`transaction.price`, `surface`, `baths`) y no expone `url` en el ejemplo del actor, así
-> que el normalizador aún no está validado. Por eso `APIFY_FOTOCASA_ACTOR` viene vacío: el
-> portal se omite hasta validarlo.
+### 4.4.1 Esquema de salida por portal
+
+El normalizador lee cada campo con varios alias y los perfiles aportan los constructores
+que faltan, así que **los dos actores verificados funcionan sin tocar código**:
+
+| Concepto | `igolaizola/idealista-scraper` | `igolaizola/fotocasa-scraper` |
+|---|---|---|
+| Enlace | `url` | `url` (ruta `/es/comprar/.../<id>/d`) |
+| Precio | `price` (string `"625000"`) | **`transaction.price`** (entero) |
+| Superficie | `size` | `surface` |
+| Habitaciones / baños | `rooms` / `bathrooms` | `rooms` / **`baths`** |
+| Título | campo propio o `suggestedTexts.title` | **no existe**: se compone de `street` + `number` + niveles de `location` |
+| Ubicación | `address` (texto) | `location.level8Name`/`level7Name`/`level5Name` (objeto) |
+| Comodidades | `features.hasSwimmingPool`, … | `features` solo trae ids (`{"id": "17"}`); se leen del **slug** (`…-jardin-piscina/190094194/d`) |
+
+> **Fotocasa** está validado en vivo (build `zQ6P2E7A5hwEubfcJ`): los 3 anuncios de una
+> ejecución se normalizaron con precio, superficie, baños y enlace. Viene desactivado por
+> defecto porque es **pay-per-event**: cada ejecución cuesta unos céntimos. Actívalo con
+> `APIFY_FOTOCASA_ACTOR=igolaizola/fotocasa-scraper`.
+>
+> Las comodidades de Fotocasa se deducen del slug de la URL, reutilizando los sinónimos de
+> `AMENITY_LABELS` (`swimming_pool` → piscina, `garden` → jardín, …). Así `must_have`
+> funciona igual en los dos portales.
 
 ### 4.5 Elegir los actores
 
-Los valores por defecto (`idealista-scraper`, `fotocasa-scraper`) son **marcadores de
-posición**: debes sustituirlos por los identificadores reales de los actores de tu cuenta.
+Los valores por defecto **son identificadores reales**: `igolaizola/idealista-scraper`
+activo y `igolaizola/fotocasa-scraper` vacío (portal omitido). No son placeholders: un id
+inexistente devuelve `404` y tumba la búsqueda completa.
 
 1. En Apify Store busca un actor de Idealista y otro de Fotocasa.
 2. Abre el actor y copia su identificador, con formato `usuario/nombre-del-actor`.
 3. Pégalos en `.env`:
 ```dotenv
-APIFY_IDEALISTA_ACTOR=mi-usuario/idealista-scraper
-APIFY_FOTOCASA_ACTOR=mi-usuario/fotocasa-scraper
+APIFY_IDEALISTA_ACTOR=igolaizola/idealista-scraper
+APIFY_FOTOCASA_ACTOR=igolaizola/fotocasa-scraper   # vacío = no usar Fotocasa
 SEARCH_OPERATION=rent        # rent (alquiler) | sale (compraventa)
 APIFY_MAX_ITEMS=40           # tope por portal
 APIFY_TIMEOUT_SECONDS=300
@@ -638,8 +658,8 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `TIMEZONE` | `Europe/Madrid` | no | zona del cron |
 | `ENABLE_SCHEDULER` | `true` | no | |
 | `APIFY_TOKEN` | — | **sí** | |
-| `APIFY_IDEALISTA_ACTOR` | `idealista-scraper` | sí (valor real) | `usuario/actor` |
-| `APIFY_FOTOCASA_ACTOR` | `fotocasa-scraper` | sí (valor real) | `usuario/actor` |
+| `APIFY_IDEALISTA_ACTOR` | `igolaizola/idealista-scraper` | no | `usuario/actor` verificado |
+| `APIFY_FOTOCASA_ACTOR` | vacío (omitido) | no | `igolaizola/fotocasa-scraper` (pay-per-event) |
 | `SEARCH_OPERATION` | `rent` | no | `rent` \| `sale` |
 | `APIFY_MAX_ITEMS` | `40` | no | 1-200 |
 | `APIFY_TIMEOUT_SECONDS` | `300` | no | 10-900 |

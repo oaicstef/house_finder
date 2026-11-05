@@ -16,7 +16,7 @@ from decimal import Decimal
 from typing import Any, Callable, Mapping, Sequence
 
 from app.domain.exceptions import ScraperException
-from app.domain.models import Listing, Portal, SearchCriteria
+from app.domain.models import AMENITY_LABELS, Listing, Portal, SearchCriteria, normalize_text
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["ApifyListingScraper"]
@@ -25,13 +25,21 @@ __all__ = ["ApifyListingScraper"]
 _FAILED_RUN_STATUSES = frozenset({"FAILED", "ABORTED", "TIMED-OUT"})
 
 #: Claves candidatas en el item crudo del actor -> campo normalizado.
+#: Una clave con puntos (``transaction.price``) se resuelve como ruta anidada.
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "url": ("url", "link", "propertyUrl", "detailUrl", "href", "property_url"),
     "title": ("title", "name", "propertyTitle", "headline"),
-    "price": ("price", "priceEur", "priceAmount", "priceValue", "currentPrice"),
+    "price": (
+        "price",
+        "transaction.price",
+        "priceEur",
+        "priceAmount",
+        "priceValue",
+        "currentPrice",
+    ),
     "size": ("size", "squareMeters", "surface", "surfaceArea", "area", "constructedArea"),
     "rooms": ("rooms", "bedrooms", "roomCount"),
-    "bathrooms": ("bathrooms", "bathroomCount"),
+    "bathrooms": ("bathrooms", "baths", "bathroomCount"),
     "location": ("address", "location", "city", "district", "place", "neighborhood"),
     "description": ("description", "body", "summary", "details"),
 }
@@ -51,39 +59,34 @@ _AMENITY_FLAGS: dict[str, str] = {
 class _PortalProfile:
     """Traduce los conceptos del dominio al vocabulario de cada actor de Apify.
 
-    Los actores de Apify Store no comparten esquema: Idealista usa ``sale``/``homes``
-    con precios en string, Fotocasa usa ``buy``/``home`` con enteros y sin país.
+    Los actores de Apify Store no comparten esquema ni en la entrada ni en la salida:
+    Idealista usa ``sale``/``homes`` con precios en string y devuelve título; Fotocasa
+    usa ``buy``/``home`` con enteros, no publica título y anida el precio en
+    ``transaction.price``. Los *builders* cubren esa variación de salida.
     """
 
     operation_map: Mapping[str, str]
     property_type: str
     country: str | None
     price_as_string: bool
+    #: Compone el título cuando el actor no lo devuelve.
+    title_builder: Callable[[Mapping[str, Any]], str | None] | None = None
+    #: Compone la ubicación cuando el actor devuelve un objeto en vez de texto.
+    location_builder: Callable[[Mapping[str, Any]], str | None] | None = None
 
-
-_PROFILES: dict[Portal, _PortalProfile] = {
-    Portal.IDEALISTA: _PortalProfile(
-        # Verificado contra igolaizola/idealista-scraper.
-        operation_map={"rent": "rent", "sale": "sale"},
-        property_type="homes",
-        country="es",
-        price_as_string=True,
-    ),
-    Portal.FOTOCASA: _PortalProfile(
-        # Verificado contra el esquema de igolaizola/fotocasa-scraper.
-        operation_map={"rent": "rent", "sale": "buy"},
-        property_type="home",
-        country=None,
-        price_as_string=False,
-    ),
-}
 
 _NUMBER_TOKEN = re.compile(r"-?\d[\d.,]*")
 
 
 def _first_value(item: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
+    """Primer valor utilizable de ``keys``; admite rutas anidadas con puntos."""
     for key in keys:
-        value = item.get(key)
+        value: Any = item
+        for part in key.split("."):
+            if not isinstance(value, Mapping):
+                value = None
+                break
+            value = value.get(part)
         if value not in (None, "", [], {}):
             return value
     return None
@@ -140,6 +143,66 @@ def _suggested_title(item: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _fotocasa_location(item: Mapping[str, Any]) -> str | None:
+    """``Ventas, Ciudad Lineal, Madrid`` a partir de los niveles del portal.
+
+    El ``location`` de Fotocasa es un objeto de ids y nombres; serializarlo tal cual
+    dejaba el campo del dominio lleno de ids (``{'level1Id': '14', ...}``).
+    """
+    location = item.get("location")
+    if not isinstance(location, Mapping):
+        return None
+
+    parts: list[str] = []
+    for key in ("level8Name", "level7Name", "level5Name", "level2Name"):
+        name = location.get(key)
+        if isinstance(name, str) and name.strip() and name.strip() not in parts:
+            parts.append(name.strip())
+    return ", ".join(parts) or None
+
+
+def _text(value: Any) -> str | None:
+    """Texto limpio de un valor escalar, o ``None`` si no aporta nada."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _fotocasa_title(item: Mapping[str, Any]) -> str | None:
+    """Compone ``Calle Montejurra 33, Ventas, Ciudad Lineal, Madrid``.
+
+    El actor no publica un campo de título: se arma con la dirección y la ubicación.
+    """
+    address = " ".join(
+        part for part in (_text(item.get("street")), _text(item.get("number"))) if part
+    )
+    zone = _fotocasa_location(item)
+    if address and zone:
+        return f"{address}, {zone}"
+    return address or zone
+
+
+_PROFILES: dict[Portal, _PortalProfile] = {
+    Portal.IDEALISTA: _PortalProfile(
+        # Verificado en vivo contra igolaizola/idealista-scraper.
+        operation_map={"rent": "rent", "sale": "sale"},
+        property_type="homes",
+        country="es",
+        price_as_string=True,
+    ),
+    Portal.FOTOCASA: _PortalProfile(
+        # Verificado en vivo contra igolaizola/fotocasa-scraper (build zQ6P2E7A5hwEubfcJ).
+        operation_map={"rent": "rent", "sale": "buy"},
+        property_type="home",
+        country=None,
+        price_as_string=False,
+        title_builder=_fotocasa_title,
+        location_builder=_fotocasa_location,
+    ),
+}
+
+
 def _extract_amenities(item: Mapping[str, Any]) -> tuple[str, ...]:
     """Traduce los flags del portal a comodidades canónicas en español-legible."""
     keys: dict[str, Any] = {}
@@ -161,6 +224,22 @@ def _extract_amenities(item: Mapping[str, Any]) -> tuple[str, ...]:
 def _as_int_string(value: float) -> str:
     """``1400.0`` -> ``"1400"`` (los actores esperan strings sin decimales)."""
     return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def _url_amenities(url: str) -> tuple[str, ...]:
+    """Comodidades deducidas del slug del anuncio.
+
+    Fotocasa no publica etiquetas legibles en ``features`` (solo ids) pero enumera las
+    comodidades en la URL: ``…/aire-acondicionado-jardin-terraza-piscina/190860387/d``.
+    Se reutilizan los sinónimos del dominio (``AMENITY_LABELS``) para no duplicar
+    vocabulario; en Idealista la URL es un id numérico y no coincide con nada.
+    """
+    text = normalize_text(url.replace("-", " ").replace("/", " ").replace("_", " "))
+    return tuple(
+        amenity
+        for amenity, labels in AMENITY_LABELS.items()
+        if any(label in text for label in labels)
+    )
 
 
 def _dataset_id(run: Any) -> str | None:
@@ -379,26 +458,33 @@ class ApifyListingScraper:
 
     def _normalize(self, portal: Portal, item: Mapping[str, Any]) -> Listing | None:
         """Traduce un item crudo del portal a la entidad de dominio ``Listing``."""
+        profile = _PROFILES[portal]
         url = _first_value(item, _FIELD_ALIASES["url"])
         price = _to_float(_first_value(item, _FIELD_ALIASES["price"]))
         if not isinstance(url, str) or not url.strip() or price is None or price <= 0:
             return None
 
         title = _first_value(item, _FIELD_ALIASES["title"]) or _suggested_title(item)
+        if not isinstance(title, str) or not title.strip():
+            title = profile.title_builder(item) if profile.title_builder is not None else None
+
         location = _first_value(item, _FIELD_ALIASES["location"])
+        if not isinstance(location, str) and profile.location_builder is not None:
+            location = profile.location_builder(item)
         description = _first_value(item, _FIELD_ALIASES["description"])
+        amenities = _extract_amenities(item) + _url_amenities(url.strip())
 
         return Listing(
             portal=portal,
             url=url.strip(),
-            title=str(title).strip() if title else "Vivienda sin título",
+            title=title.strip() if isinstance(title, str) and title.strip() else "Vivienda sin título",
             price_eur=price,
-            location=str(location).strip() if location else "",
+            location=location.strip() if isinstance(location, str) else "",
             size_m2=_to_float(_first_value(item, _FIELD_ALIASES["size"])),
             rooms=_to_int(_first_value(item, _FIELD_ALIASES["rooms"])),
             bathrooms=_to_int(_first_value(item, _FIELD_ALIASES["bathrooms"])),
             description=str(description).strip() if description else None,
-            amenities=_extract_amenities(item),
+            amenities=tuple(dict.fromkeys(amenities)),
             raw=dict(item),
         )
 

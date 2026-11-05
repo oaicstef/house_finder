@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
 
     apify_token: str = ""
-    apify_idealista_actor: str = "idealista-scraper"
-    apify_fotocasa_actor: str = "fotocasa-scraper"
+    # Valores reales verificados en Apify: un placeholder aquí provoca 404 y tumba la
+    # búsqueda completa cuando la variable no está definida. Vacío = portal omitido.
+    apify_idealista_actor: str = "igolaizola/idealista-scraper"
+    apify_fotocasa_actor: str = ""
     search_operation: Literal["rent", "sale"] = "rent"
     apify_max_items: int = Field(default=40, ge=1, le=200)
     apify_timeout_seconds: int = Field(default=300, ge=10, le=900)

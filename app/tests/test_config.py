@@ -56,6 +56,16 @@ def test_invalid_daily_must_have_raises_configuration_exception(invalid_term: st
     assert exc_info.value.details["invalid_requirement"] == invalid_term
 
 
+def test_default_actors_are_usable_or_empty() -> None:
+    """Un default no puede ser un placeholder: un id inexistente devuelve 404."""
+    settings = build_settings()
+
+    assert settings.apify_idealista_actor == "igolaizola/idealista-scraper"
+    assert "/" in settings.apify_idealista_actor
+    # Fotocasa es pay-per-event: se omite salvo que el usuario lo active.
+    assert settings.apify_fotocasa_actor == ""
+
+
 def test_daily_must_have_changes_the_criteria_fingerprint() -> None:
     without_requirements = build_settings().build_daily_criteria()
     with_requirements = build_settings(daily_must_have="piscina,padel").build_daily_criteria()

@@ -565,6 +565,90 @@ sobre 2 anuncios (`con piscina y padel` / `solo piscina`) -> `scraped=2, matched
 segunda ejecución del mismo día devuelve `None` (idempotencia intacta). Términos vacíos
 siguen produciendo `must_have=()` (sin filtro duro).
 
+## Revisión 2026-11-05 (f) — activar Fotocasa: normalización de salida y defaults seguros
+
+El portal de Fotocasa estaba desactivado «hasta validar su salida». Dos defectos lo
+impedían y uno de ellos era silencioso:
+
+1. **Precio anidado**: el actor no devuelve `price` en la raíz sino `transaction.price`,
+   así que `_normalize` descartaba *todos* los items (precio `None`) y el portal habría
+   costado dinero sin devolver un solo anuncio.
+2. **Valor por defecto engañoso**: `apify_fotocasa_actor = "fotocasa-scraper"` no existe en
+   Apify (`404`), así que **borrar** la variable del `.env` rompía la búsqueda entera
+   (`502 SCRAPER_FAILURE`), mientras que dejarla vacía omitía el portal. Efecto
+   contra-intuitivo: quitar una línea opcional tumbaba Idealista.
+
+### Evidencia real (una ejecución, `maxTotalChargeUsd=0.05`, `maxItems=3`)
+
+Item real de `igolaizola/fotocasa-scraper` (build `zQ6P2E7A5hwEubfcJ`, `SUCCEEDED`):
+
+| Campo del actor | Valor observado | Campo del dominio |
+|---|---|---|
+| `url` | `https://www.fotocasa.es/es/comprar/vivienda/madrid-capital/ventas/191310510/d` | `url` (ya funcionaba) |
+| `transaction.price` | `70000` (entero) | `price_eur` (**no se leía**) |
+| `surface` | `59884` (m²) | `size_m2` |
+| `rooms` / `baths` | `5` / `3` | `rooms` / `bathrooms` (**`baths` no estaba**) |
+| `street` + `number` | `Calle Montejurra` + `33` | `title` (compuesto) |
+| `location.level8Name` + `level7Name` + `level5Name` | `Ventas`, `Ciudad Lineal`, `Madrid` | `location` (**antes se serializaba el dict**) |
+| `description` | texto libre | `description` |
+| `features` | `[]` (lista vacía) | `amenities` = `()` |
+| `features` (chalets) | `[{"id": "17"}, …]` (solo ids) | `amenities` desde el slug de la URL |
+| `url` de un chalet | `…/pozuelo-de-alarcon/aire-acondicionado-calefaccion-parking-jardin-terraza-trastero-piscina/190094194/d` | `{air_conditioning, garden, terrace, storage_room, swimming_pool}` |
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Rutas anidadas | `_first_value` resuelve rutas con puntos (`transaction.price`) | Evita un normalizador paralelo por portal; el resto de alias sigue plano. |
+| Título/ubicación sin campo propio | `_PortalProfile.title_builder` / `location_builder` opcionales | La variación de *salida* vive en el perfil del portal (OCP), igual que la de *entrada*. |
+| Amenities de Fotocasa | No se inventan: `()` si el actor no las expone | `must_have` sigue funcionando porque compara contra `description`. |
+| Amenities desde el slug | `_url_amenities` reutiliza `AMENITY_LABELS` sobre la URL | Verificado en vivo: `features` solo trae `{"id": "17"}` y el slug enumera `…-jardin-terraza-trastero-piscina`. Sin vocabulario nuevo: los mismos sinónimos del dominio sirven para `must_have`. |
+| Defaults | `APIFY_IDEALISTA_ACTOR=igolaizola/idealista-scraper` (real) y `APIFY_FOTOCASA_ACTOR=` vacío | Un default debe ser un valor que funcione; «vacío = omitir» es seguro y el 404 nunca sorprende. |
+
+### Alcance
+
+- Dentro: `apify_scraper.py` (alias, builders, perfil), `config.py` (defaults),
+  `.env.example`, `README.md`, `docs/USAGE.md`, tests.
+- Fuera: `features`/amenities de Fotocasa más allá de lo que publique el actor, filtros
+  específicos del portal (`locationType`, `publicationDate`, `sortBy`), dedupe entre
+  portales.
+
+### Plan de tests
+
+- `app/tests/test_apify_scraper.py`: item real de Fotocasa saneado -> `price_eur`,
+  `bathrooms`, `title` compuesto, `location` de texto, `amenities == ()`; item sin `url`
+  se descarta; `transaction.price` ausente -> item descartado (no excepción).
+- `app/tests/test_config.py`: default de Fotocasa vacío y de Idealista con formato
+  `usuario/actor`; con el default vacío, una búsqueda solo-Fotocasa omite el portal.
+
+### Orden de implementación
+
+1. [x] `apify_scraper.py` — alias `transaction.price` + `baths`, rutas anidadas, builders por portal — *done* cuando un item real de Fotocasa se normaliza con precio, baños, título y ubicación.
+2. [x] `config.py` — defaults `igolaizola/idealista-scraper` y `""` — *done* cuando borrar `APIFY_FOTOCASA_ACTOR` ya no produce 404.
+3. [x] `.env.example`, `README.md`, `docs/USAGE.md` — cómo activar Fotocasa y su coste — *done* cuando la variable aparece con el valor recomendado.
+4. [x] tests — *done* con `pytest` en verde.
+
+### Criterios de aceptación
+
+- [x] Un item real de Fotocasa produce un `Listing` con `url`, `price_eur`, `size_m2`, `bathrooms` y `location` legible.
+- [x] `APIFY_FOTOCASA_ACTOR=` sigue omitiendo el portal con `WARNING` (sin gastar).
+- [x] Sin la variable, el comportamiento es el mismo que vacía (nunca `404`).
+- [x] `pytest` en verde.
+
+### Evidencia
+
+- `pytest` -> 123 passed (6 nuevos: 5 de Fotocasa en `test_apify_scraper.py`, 1 de defaults
+  en `test_config.py`).
+- **Datos reales ya descargados** (3 items, sin coste extra) a través del scraper real:
+  `listings normalizados: 3 de 3` (antes 0/3 por el precio anidado), con
+  `70000 € / 59884 m² / 5 hab / 3 baños` y título
+  `Calle Montejurra 33, Ventas, Ciudad Lineal, Madrid`.
+- **Ejecución real por el código de la app** (`ApifyListingScraper`, `maxItems=3`,
+  `maxTotalChargeUsd=0.05`): 3 anuncios con enlace, precio y baños, p. ej.
+  `598000 € / 61 m² / 2 hab / 1 baño — Cl. de Ayala, Goya, Barrio de Salamanca, Madrid`.
+- **Chalets reales** (`Pozuelo de Alarcón`, `minSize=200`): el slug confirma el hallazgo
+  `…-jardin-terraza-trastero-piscina/…`, base de `_url_amenities`.
+
 
 
 

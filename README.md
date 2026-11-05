@@ -97,8 +97,8 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 | `ENABLE_SCHEDULER` | `true` | Activa el cron diario (07:00, `TIMEZONE`). |
 | `TIMEZONE` | `Europe/Madrid` | Zona horaria del cron. |
 | `APIFY_TOKEN` | — | **Obligatoria**. Token de Apify. |
-| `APIFY_IDEALISTA_ACTOR` | `idealista-scraper` | Actor de Apify para Idealista. |
-| `APIFY_FOTOCASA_ACTOR` | `fotocasa-scraper` | Actor de Apify para Fotocasa. |
+| `APIFY_IDEALISTA_ACTOR` | `igolaizola/idealista-scraper` | Actor de Apify para Idealista (verificado). |
+| `APIFY_FOTOCASA_ACTOR` | vacío (portal omitido) | Actor de Apify para Fotocasa; pon `igolaizola/fotocasa-scraper` para activarlo (pay-per-event). |
 | `SEARCH_OPERATION` | `rent` | `rent` (alquiler) \| `sale` (compraventa). |
 | `APIFY_MAX_ITEMS` | `40` | Tope de anuncios solicitados por portal. |
 | `APIFY_TIMEOUT_SECONDS` | `300` | Timeout de la ejecución del actor. |

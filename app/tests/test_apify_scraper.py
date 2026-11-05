@@ -99,6 +99,32 @@ REAL_ACTOR_ITEM = {
 }
 
 
+#: Item con la forma real del actor ``igolaizola/fotocasa-scraper`` (verificado en vivo).
+#: El precio va anidado en ``transaction.price`` y ``location`` es un objeto de niveles;
+#: los datos de contacto de la agencia se omiten a propósito.
+REAL_FOTOCASA_ITEM = {
+    "propertyId": "191310510",
+    "url": "https://www.fotocasa.es/es/comprar/vivienda/madrid-capital/ventas/191310510/d",
+    "transaction": {"type": "SALE", "price": 70000, "priceDrop": None},
+    "surface": 120,
+    "rooms": 5,
+    "baths": 3,
+    "street": "Calle Montejurra",
+    "number": "33",
+    "description": "Chalet con piscina y pista de padel en urbanizacion",
+    "features": [],
+    "dynamicFeatures": ["IS_EXTERIOR"],
+    "location": {
+        "countryName": "España",
+        "level1Name": "Madrid",
+        "level2Name": "Madrid",
+        "level5Name": "Madrid",
+        "level7Name": "Ciudad Lineal",
+        "level8Name": "Ventas",
+    },
+}
+
+
 def build_scraper(client: _FakeClient, **overrides: Any) -> ApifyListingScraper:
     params: dict[str, Any] = {
         "token": "test-token",
@@ -373,6 +399,98 @@ async def test_listing_without_amenity_flags_has_empty_amenities() -> None:
     listings = await build_scraper(client).fetch_listings(idealista_criteria())
 
     assert listings[0].amenities == ()
+
+
+async def test_normalizes_real_fotocasa_item_shape() -> None:
+    """Forma real de igolaizola/fotocasa-scraper: precio en ``transaction.price``."""
+    client = _FakeClient([REAL_FOTOCASA_ITEM])
+    scraper = build_scraper(
+        client,
+        actor_ids={Portal.FOTOCASA: "actor-fotocasa"},
+        operation="sale",
+    )
+
+    listings = await scraper.fetch_listings(
+        SearchCriteria(location="Madrid", portals=(Portal.FOTOCASA,), min_size_m2=60.0)
+    )
+
+    assert len(listings) == 1
+    listing = listings[0]
+    assert listing.portal is Portal.FOTOCASA
+    assert listing.url == REAL_FOTOCASA_ITEM["url"]
+    assert listing.price_eur == 70000.0
+    assert listing.size_m2 == 120.0
+    assert listing.rooms == 5
+    # ``baths`` no ``bathrooms``.
+    assert listing.bathrooms == 3
+    assert listing.title == "Calle Montejurra 33, Ventas, Ciudad Lineal, Madrid"
+    # La ubicación es texto legible, no el diccionario de ids del portal.
+    assert listing.location == "Ventas, Ciudad Lineal, Madrid"
+    # El actor no publica comodidades: no se inventan.
+    assert listing.amenities == ()
+
+
+async def test_fotocasa_amenities_are_read_from_the_url_slug() -> None:
+    """``features`` solo trae ids; el slug sí enumera las comodidades."""
+    item = dict(
+        REAL_FOTOCASA_ITEM,
+        url=(
+            "https://www.fotocasa.es/es/comprar/vivienda/pozuelo-de-alarcon/"
+            "aire-acondicionado-calefaccion-parking-jardin-terraza-trastero-piscina/190094194/d"
+        ),
+        features=[{"id": "1"}, {"id": "17"}],
+    )
+    client = _FakeClient([item])
+    scraper = build_scraper(client, actor_ids={Portal.FOTOCASA: "actor-fotocasa"})
+
+    listings = await scraper.fetch_listings(
+        SearchCriteria(location="Pozuelo de Alarcón", portals=(Portal.FOTOCASA,))
+    )
+
+    listing = listings[0]
+    assert set(listing.amenities) == {
+        "air_conditioning",
+        "garden",
+        "terrace",
+        "storage_room",
+        "swimming_pool",
+    }
+    # Los requisitos obligatorios reconocen el vocabulario de la URL.
+    assert listing.satisfies_all(["piscina", "garaje"]) is False
+    assert listing.satisfies_all(["piscina", "jardin"]) is True
+
+
+async def test_idealista_numeric_url_adds_no_amenities() -> None:
+    client = _FakeClient([REAL_ACTOR_ITEM])
+
+    listings = await build_scraper(client).fetch_listings(idealista_criteria())
+
+    assert listings[0].amenities == ("terrace",)
+
+
+async def test_fotocasa_item_without_price_is_discarded() -> None:
+    """Sin ``transaction.price`` el anuncio se descarta, no rompe la búsqueda."""
+    broken = dict(REAL_FOTOCASA_ITEM, transaction={"type": "SALE", "price": None})
+    client = _FakeClient([broken, REAL_FOTOCASA_ITEM])
+    scraper = build_scraper(client, actor_ids={Portal.FOTOCASA: "actor-fotocasa"})
+
+    listings = await scraper.fetch_listings(
+        SearchCriteria(location="Madrid", portals=(Portal.FOTOCASA,))
+    )
+
+    assert [listing.url for listing in listings] == [REAL_FOTOCASA_ITEM["url"]]
+
+
+async def test_fotocasa_item_without_url_is_discarded() -> None:
+    broken = {key: value for key, value in REAL_FOTOCASA_ITEM.items() if key != "url"}
+    client = _FakeClient([broken])
+    scraper = build_scraper(client, actor_ids={Portal.FOTOCASA: "actor-fotocasa"})
+
+    listings = await scraper.fetch_listings(
+        SearchCriteria(location="Madrid", portals=(Portal.FOTOCASA,))
+    )
+
+    assert listings == []
 
 
 @pytest.mark.parametrize(
