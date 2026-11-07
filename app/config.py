@@ -6,6 +6,8 @@ Se valida al arrancar: si falta una clave obligatoria se lanza
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -53,6 +55,10 @@ class Settings(BaseSettings):
     # Tope de gasto por ejecución de actor (None = sin límite explícito).
     apify_max_charge_usd: float | None = Field(default=None, gt=0)
 
+    # Geocodificación de códigos postales (CartoCiudad).
+    geocoding_base_url: str = "https://www.cartociudad.es/geocoder/api/geocoder"
+    geocoding_timeout_seconds: float = Field(default=10.0, gt=0)
+
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-flash"
@@ -67,6 +73,10 @@ class Settings(BaseSettings):
     daily_preferences: str | None = None
     #: Requisitos obligatorios del cron, separados por comas (vacío = sin filtro duro).
     daily_must_have: str | None = None
+    #: Radio geográfico del cron (CP y radio deben configurarse juntos).
+    daily_postal_code: str | None = None
+    daily_radius_km: int | None = Field(default=None, ge=1, le=50)
+    daily_min_year_built: int | None = Field(default=None, ge=1800, le=2100)
 
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
@@ -79,6 +89,9 @@ class Settings(BaseSettings):
         "daily_min_rooms",
         "daily_preferences",
         "daily_must_have",
+        "daily_postal_code",
+        "daily_radius_km",
+        "daily_min_year_built",
         mode="before",
     )
     @classmethod
@@ -87,6 +100,15 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("geocoding_base_url")
+    @classmethod
+    def _check_geocoding_base_url(cls, value: str) -> str:
+        """El geocodificador no puede quedar sin URL."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("GEOCODING_BASE_URL no puede estar vacío")
+        return stripped
 
     @model_validator(mode="after")
     def _validate_required_secrets(self) -> "Settings":
@@ -130,6 +152,33 @@ class Settings(BaseSettings):
             )
 
         preferences = (self.daily_preferences or "").strip() or None
+        postal_code = (self.daily_postal_code or "").strip() or None
+        radius_km = self.daily_radius_km
+        if (postal_code is None) != (radius_km is None):
+            raise ConfigurationException(
+                "DAILY_POSTAL_CODE y DAILY_RADIUS_KM deben configurarse juntos",
+                details={
+                    "daily_postal_code": postal_code,
+                    "daily_radius_km": radius_km,
+                },
+            )
+        if postal_code is not None and re.fullmatch(r"\d{5}", postal_code) is None:
+            raise ConfigurationException(
+                "DAILY_POSTAL_CODE debe tener 5 dígitos",
+                details={"daily_postal_code": postal_code},
+            )
+        if self.daily_min_year_built is not None:
+            current_year = date.today().year
+            if not 1800 <= self.daily_min_year_built <= current_year + 1:
+                raise ConfigurationException(
+                    "DAILY_MIN_YEAR_BUILT está fuera del rango permitido",
+                    details={
+                        "daily_min_year_built": self.daily_min_year_built,
+                        "min": 1800,
+                        "max": current_year + 1,
+                    },
+                )
+
         return SearchCriteria(
             location=self.daily_search_location,
             portals=tuple(portals),
@@ -139,6 +188,9 @@ class Settings(BaseSettings):
             max_results=self.daily_max_results,
             preferences=preferences,
             must_have=self._parse_daily_must_have(),
+            postal_code=postal_code,
+            radius_km=radius_km,
+            min_year_built=self.daily_min_year_built,
         )
 
     def _parse_daily_must_have(self) -> tuple[str, ...]:

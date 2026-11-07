@@ -130,6 +130,9 @@ def make_listing(
     rooms: int | None = 2,
     portal: Portal = Portal.IDEALISTA,
     title: str = "Piso luminoso en Chamberí",
+    year_built: int | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
 ) -> Listing:
     return Listing(
         portal=portal,
@@ -141,6 +144,9 @@ def make_listing(
         rooms=rooms,
         bathrooms=1,
         description="Piso exterior con ascensor",
+        year_built=year_built,
+        latitude=latitude,
+        longitude=longitude,
     )
 
 
@@ -174,6 +180,7 @@ def make_container(settings: Settings) -> Any:
         classifier: FakeClassifier | None = None,
         repository: InMemoryListingRepository | None = None,
         search_criteria: SearchCriteria | None = None,
+        postal_code_locator: Any = None,
         today: Any = None,
     ) -> ServiceContainer:
         repo = repository or InMemoryListingRepository(logger=RecordingLogger())
@@ -183,6 +190,7 @@ def make_container(settings: Settings) -> Any:
             scraper_port,
             classifier_port,
             repo,
+            postal_code_locator=postal_code_locator,
             logger=RecordingLogger(),
             today=today,
         )

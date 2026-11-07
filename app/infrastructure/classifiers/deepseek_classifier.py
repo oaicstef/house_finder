@@ -33,6 +33,11 @@ _SYSTEM_PROMPT = (
     "piscina y 'swimming_pool' no aparece, no asumas que la tiene.\n"
     "- 'verified_requirements' son requisitos que YA se han comprobado contra el anuncio "
     "completo: dalos por cumplidos y no los eches en falta en el motivo.\n"
+    "- Si 'criteria.min_year_built' está presente, es un requisito DURO: cuando el año de "
+    "construcción consta y es anterior, la relevancia no debe superar 0.3; cuando no consta, "
+    "no asumas que cumple el requisito ni lo puntúes como si lo cumpliera.\n"
+    "- El radio geográfico ya se ha aplicado antes de esta llamada: no descartes un anuncio "
+    "por no poder verificar tú la distancia.\n"
     "- 'relevance' es una puntuación gradual, NO un sí/no. Guíate por esta escala: "
     "0.9-1.0 = cumple los criterios del filtro y todas las preferencias; "
     "0.7-0.9 = cumple el filtro y la mayoría de las preferencias (falta algún extra); "
@@ -88,6 +93,9 @@ class DeepSeekListingClassifier:
                 "min_rooms": criteria.min_rooms,
                 "preferences": criteria.preferences,
                 "must_have": list(criteria.must_have),
+                "postal_code": criteria.postal_code,
+                "radius_km": criteria.radius_km,
+                "min_year_built": criteria.min_year_built,
             },
             "listings": [
                 {
@@ -99,6 +107,7 @@ class DeepSeekListingClassifier:
                     "rooms": listing.rooms,
                     "bathrooms": listing.bathrooms,
                     "location": listing.location,
+                    "year_built": listing.year_built,
                     "price_per_m2": listing.price_per_m2,
                     "amenities": list(listing.amenities),
                     "verified_requirements": [

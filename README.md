@@ -103,11 +103,16 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 | `APIFY_MAX_ITEMS` | `40` | Tope de anuncios solicitados por portal. |
 | `APIFY_TIMEOUT_SECONDS` | `300` | Timeout de la ejecución del actor. |
 | `APIFY_MAX_CHARGE_USD` | sin límite | Tope de gasto por ejecución de actor, en USD. |
+| `GEOCODING_BASE_URL` | `https://www.cartociudad.es/geocoder/api/geocoder` | Geocodificador para resolver `postal_code`. |
+| `GEOCODING_TIMEOUT_SECONDS` | `10` | Timeout de la consulta de geocodificación. |
 | `DEEPSEEK_API_KEY` | — | **Obligatoria**. Clave del LLM. |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Endpoint compatible con OpenAI. |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | Modelo usado en la clasificación. |
 | `DAILY_SEARCH_*` | Madrid / 1500 € / 60 m² / 2 hab. | Criterios del job diario. |
 | `DAILY_MUST_HAVE` | vacío (sin filtro) | Requisitos obligatorios del job diario, separados por comas (`piscina,padel`). |
+| `DAILY_POSTAL_CODE` | vacío | CP del job diario; requiere `DAILY_RADIUS_KM`. |
+| `DAILY_RADIUS_KM` | vacío | Radio (1-50 km) alrededor del CP del job diario. |
+| `DAILY_MIN_YEAR_BUILT` | vacío | Año mínimo de construcción del job diario. |
 | `RELEVANCE_THRESHOLD` | `0.6` | Umbral mínimo de relevancia para aceptar un anuncio. |
 | `RESULTS_DIR` | `data/results` | Directorio de resultados JSON (vacío = solo memoria). |
 
@@ -133,6 +138,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
 - `max_results` recorta la **respuesta**, no la búsqueda: el scraper pide hasta
   `APIFY_MAX_ITEMS` candidatos.
 - `must_have` es **obligatorio** (AND); `preferences` solo suma relevancia.
+- `postal_code` + `radius_km` busca en un radio alrededor del CP (CartoCiudad) y
+  `min_year_built` exige un año de construcción mínimo.
 
 Errores uniformes:
 
@@ -161,7 +168,7 @@ se pierde. Desactivable con `ENABLE_SCHEDULER=false`.
 pytest
 ```
 
-Sin llamadas reales a Apify ni DeepSeek: los puertos se sustituyen por fakes
+Sin llamadas reales a Apify, DeepSeek ni CartoCiudad: los puertos se sustituyen por fakes
 (`app/tests/conftest.py`). Cubre servicio de búsqueda, job diario, normalización del
 scraper, parseo del clasificador, endpoints y logging.
 

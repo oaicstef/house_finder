@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -17,6 +18,7 @@ from uuid import UUID
 
 __all__ = [
     "AMENITY_LABELS",
+    "Coordinates",
     "Listing",
     "ListingAssessment",
     "Portal",
@@ -70,6 +72,33 @@ def normalize_text(text: str) -> str:
     return text.translate(_ACCENTS).lower()
 
 
+#: Radio medio terrestre en kilómetros (Haversine).
+_EARTH_RADIUS_KM = 6371.0088
+
+
+@dataclass(frozen=True, slots=True)
+class Coordinates:
+    """Punto geográfico WGS84 (latitud/longitud en grados decimales)."""
+
+    latitude: float
+    longitude: float
+
+    def distance_km_to(self, other: "Coordinates") -> float:
+        """Distancia en kilómetros entre dos puntos (fórmula de Haversine)."""
+        lat1 = math.radians(self.latitude)
+        lon1 = math.radians(self.longitude)
+        lat2 = math.radians(other.latitude)
+        lon2 = math.radians(other.longitude)
+        delta_lat = lat2 - lat1
+        delta_lon = lon2 - lon1
+        a = (
+            math.sin(delta_lat / 2) ** 2
+            + math.cos(lat1) * math.cos(lat2) * math.sin(delta_lon / 2) ** 2
+        )
+        # Clamp defensivo: errores de redondeo no deben producir NaN en asin().
+        return 2 * _EARTH_RADIUS_KM * math.asin(math.sqrt(min(1.0, a)))
+
+
 @dataclass(frozen=True, slots=True)
 class Listing:
     """Anuncio normalizado, independiente del portal de origen."""
@@ -85,6 +114,10 @@ class Listing:
     description: str | None = None
     #: Comodidades detectadas en el anuncio (``swimming_pool``, ``garden``, ...).
     amenities: tuple[str, ...] = ()
+    #: Año de construcción publicado por el portal (``None`` si no consta).
+    year_built: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     # ``compare=False`` evita que datos arbitrarios intervengan en igualdad/hash.
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
@@ -111,7 +144,6 @@ class Listing:
         return all(normalize_text(term) in haystack for term in terms)
 
 
-
 @dataclass(frozen=True, slots=True)
 class SearchCriteria:
     """Criterios que definen una búsqueda personalizada."""
@@ -127,6 +159,13 @@ class SearchCriteria:
     #: Requisitos obligatorios (p. ej. ``("padel", "piscina")``). Se comprueban
     #: contra título, descripción y amenities; si falta alguno, se descarta.
     must_have: tuple[str, ...] = ()
+    #: Origen geográfico: código postal (se resuelve a coordenadas) o lat/lon.
+    postal_code: str | None = None
+    radius_km: int | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    #: Año mínimo de construcción exigido (filtro duro si el portal lo publica).
+    min_year_built: int | None = None
 
     def fingerprint(self) -> str:
         """Huella estable (sha256) para la idempotencia del job diario."""
@@ -140,6 +179,11 @@ class SearchCriteria:
             "max_results": self.max_results,
             "preferences": (self.preferences or "").strip().lower() or None,
             "must_have": sorted(normalize_text(term) for term in self.must_have),
+            "postal_code": (self.postal_code or "").strip() or None,
+            "radius_km": self.radius_km,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+            "min_year_built": self.min_year_built,
         }
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

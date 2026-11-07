@@ -6,14 +6,21 @@ implementaciones concretas: cumple SRP (solo orquesta) y DIP (depende de ports).
 
 from __future__ import annotations
 
+import re
 import time
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import Any, Callable
 from uuid import UUID, uuid4
 
 import structlog
 
-from app.domain.exceptions import ScraperException, SearchNotFoundError, ValidationError
+from app.domain.exceptions import (
+    ConfigurationException,
+    ScraperException,
+    SearchNotFoundError,
+    ValidationError,
+)
 from app.domain.models import (
     Listing,
     ScoredListing,
@@ -21,10 +28,71 @@ from app.domain.models import (
     SearchResult,
     Trigger,
 )
-from app.domain.ports import ClassifierPort, ListingRepository, ScraperPort
+from app.domain.ports import (
+    ClassifierPort,
+    ListingRepository,
+    PostalCodeLocatorPort,
+    ScraperPort,
+)
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["SearchService"]
+
+_POSTAL_CODE_PATTERN = re.compile(r"^\d{5}$")
+_MIN_RADIUS_KM = 1
+_MAX_RADIUS_KM = 50
+
+
+def _validate_geo(criteria: SearchCriteria) -> None:
+    """Valida la coherencia del origen geográfico y del radio."""
+    postal_code = (criteria.postal_code or "").strip()
+    if criteria.postal_code is not None:
+        if _POSTAL_CODE_PATTERN.fullmatch(postal_code) is None:
+            raise ValidationError(
+                "El código postal debe tener 5 dígitos",
+                code="INVALID_POSTAL_CODE",
+                details={"postal_code": criteria.postal_code},
+            )
+        if criteria.latitude is not None or criteria.longitude is not None:
+            raise ValidationError(
+                "Usa postal_code o latitude/longitude, no ambos",
+                details={"field": "postal_code"},
+            )
+
+    if (criteria.latitude is None) != (criteria.longitude is None):
+        raise ValidationError(
+            "latitude y longitude deben enviarse juntas",
+            details={"field": "latitude/longitude"},
+        )
+    if criteria.latitude is not None and not -90 <= criteria.latitude <= 90:
+        raise ValidationError(
+            "latitude debe estar entre -90 y 90",
+            details={"latitude": criteria.latitude},
+        )
+    if criteria.longitude is not None and not -180 <= criteria.longitude <= 180:
+        raise ValidationError(
+            "longitude debe estar entre -180 y 180",
+            details={"longitude": criteria.longitude},
+        )
+
+    has_origin = postal_code != "" or criteria.latitude is not None
+    if criteria.radius_km is not None and not has_origin:
+        raise ValidationError(
+            "radius_km requiere postal_code o latitude/longitude",
+            details={"field": "radius_km"},
+        )
+    if has_origin and criteria.radius_km is None:
+        raise ValidationError(
+            "radius_km es obligatorio cuando se indica un origen geográfico",
+            details={"field": "radius_km"},
+        )
+    if criteria.radius_km is not None and not (
+        _MIN_RADIUS_KM <= criteria.radius_km <= _MAX_RADIUS_KM
+    ):
+        raise ValidationError(
+            f"radius_km debe estar entre {_MIN_RADIUS_KM} y {_MAX_RADIUS_KM}",
+            details={"radius_km": criteria.radius_km},
+        )
 
 
 class SearchService:
@@ -36,6 +104,7 @@ class SearchService:
         classifier: ClassifierPort,
         repository: ListingRepository,
         *,
+        postal_code_locator: PostalCodeLocatorPort | None = None,
         logger: Any | None = None,
         today: Callable[[], date] | None = None,
         now: Callable[[], datetime] | None = None,
@@ -43,6 +112,7 @@ class SearchService:
         self._scraper = scraper
         self._classifier = classifier
         self._repository = repository
+        self._postal_code_locator = postal_code_locator
         self._logger = logger or get_logger("app.search")
         self._today = today or date.today
         self._now = now or (lambda: datetime.now(timezone.utc))
@@ -116,8 +186,9 @@ class SearchService:
         search_id: UUID,
         started: float,
     ) -> list[Listing]:
+        resolved = await self._resolve_geo(criteria, search_id)
         try:
-            listings = await self._scraper.fetch_listings(criteria)
+            listings = await self._scraper.fetch_listings(resolved)
         except ScraperException as exc:
             self._logger.warning(
                 "search_scraper_failed",
@@ -136,6 +207,53 @@ class SearchService:
             duration_ms=self._elapsed_ms(started),
         )
         return listings
+
+    async def _resolve_geo(self, criteria: SearchCriteria, search_id: UUID) -> SearchCriteria:
+        """Resuelve el código postal en coordenadas para la llamada al scraper.
+
+        Los criterios originales se conservan en el resultado: la huella de
+        idempotencia no depende de cambios en el centroide del geocodificador.
+        """
+        if criteria.postal_code is None or criteria.latitude is not None:
+            return criteria
+
+        if self._postal_code_locator is None:
+            raise ConfigurationException(
+                "No hay resolvedor de códigos postales configurado",
+                details={"field": "postal_code"},
+            )
+
+        started = time.perf_counter()
+        coordinates = await self._postal_code_locator.locate(criteria.postal_code)
+        duration_ms = self._elapsed_ms(started)
+        if coordinates is None:
+            self._logger.warning(
+                "postal_code_not_found",
+                search_id=str(search_id),
+                postal_code=criteria.postal_code,
+                error_code="POSTAL_CODE_NOT_FOUND",
+                duration_ms=duration_ms,
+            )
+            raise ValidationError(
+                f"No se ha encontrado el código postal {criteria.postal_code}",
+                code="POSTAL_CODE_NOT_FOUND",
+                details={"postal_code": criteria.postal_code},
+            )
+
+        self._logger.info(
+            "postal_code_resolved",
+            search_id=str(search_id),
+            postal_code=criteria.postal_code,
+            radius_km=criteria.radius_km,
+            latitude=coordinates.latitude,
+            longitude=coordinates.longitude,
+            duration_ms=duration_ms,
+        )
+        return replace(
+            criteria,
+            latitude=coordinates.latitude,
+            longitude=coordinates.longitude,
+        )
 
     def _apply_requirements(
         self,
@@ -226,6 +344,18 @@ class SearchService:
                     "max_price_eur": criteria.max_price_eur,
                 },
             )
+        _validate_geo(criteria)
+        if criteria.min_year_built is not None:
+            current_year = date.today().year
+            if not 1800 <= criteria.min_year_built <= current_year + 1:
+                raise ValidationError(
+                    "min_year_built está fuera del rango permitido",
+                    details={
+                        "min_year_built": criteria.min_year_built,
+                        "min": 1800,
+                        "max": current_year + 1,
+                    },
+                )
 
     @staticmethod
     def _elapsed_ms(started: float) -> float:

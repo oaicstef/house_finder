@@ -24,6 +24,7 @@ from app.domain.ports import (
     SearchServiceProtocol,
 )
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
+from app.infrastructure.geocoding.carto_ciudad_locator import CartoCiudadPostalCodeLocator
 from app.infrastructure.repositories.json_file_repository import JsonFileListingRepository
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
 from app.infrastructure.scrapers.apify_scraper import ApifyListingScraper
@@ -81,7 +82,16 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         relevance_threshold=resolved.relevance_threshold,
     )
 
-    search_service = SearchService(scraper, classifier, repository)
+    postal_code_locator = CartoCiudadPostalCodeLocator(
+        base_url=resolved.geocoding_base_url,
+        timeout_seconds=resolved.geocoding_timeout_seconds,
+    )
+    search_service = SearchService(
+        scraper,
+        classifier,
+        repository,
+        postal_code_locator=postal_code_locator,
+    )
     scheduled_search_service = ScheduledSearchService(
         search_service,
         repository,
