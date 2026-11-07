@@ -140,6 +140,8 @@ El repositorio se despliega solo con GitHub Actions (`.github/workflows/`):
 | `N100_SSH_KEY` | alternativa | Clave privada SSH sin passphrase (si no usas contraseña). |
 | `N100_PORT` | no | Puerto SSH (22 por defecto). |
 | `N100_DEPLOY_PATH` | no | Checkout del repo en el N100 (`$HOME/house_finder` por defecto). |
+| `APIFY_TOKEN` | sí | Token de Apify; el deploy lo escribe en el `.env` del N100. |
+| `DEEPSEEK_API_KEY` | sí | Clave del clasificador; el deploy la escribe en el `.env` del N100. |
 | `REGISTRY_USERNAME` | opcional | Usuario GHCR (`oaicstef`); sin él, el N100 construye la imagen desde el checkout. |
 | `REGISTRY_PASSWORD` | opcional | PAT con `read:packages` para descargar la imagen ya construida. |
 

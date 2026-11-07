@@ -36,7 +36,7 @@ En el N100:
 git clone https://github.com/oaicstef/house_finder.git ~/house_finder
 cd ~/house_finder/deploy/n100
 cp .env.example .env
-nano .env          # APIFY_TOKEN, DEEPSEEK_API_KEY, SEARCH_PROFILE_JSON, HOST_PORT...
+nano .env          # SEARCH_PROFILE_JSON, HOST_PORT...
 chmod +x deploy.sh
 docker compose up -d
 ```
@@ -46,6 +46,10 @@ La UI queda en `http://<n100>:8000/`.
 
 > El contenedor corre como UID 10001. `deploy.sh` crea `data/` y le da permisos de
 > escritura (`chmod 0777`); si prefieres algo más estricto, usa `chown 10001:10001`.
+
+Los tokens `APIFY_TOKEN` y `DEEPSEEK_API_KEY` se guardan como secretos del repositorio y
+`deploy.sh` los escribe en `.env` (permisos 600) en cada despliegue; no hace falta
+copiarlos a mano en el N100.
 
 ## Secretos del repositorio
 
@@ -59,6 +63,8 @@ Settings → Secrets and variables → Actions:
 | `N100_SSH_KEY` | alternativa | Clave privada SSH sin passphrase (si no usas contraseña). |
 | `N100_PORT` | no | Puerto SSH (por defecto 22). |
 | `N100_DEPLOY_PATH` | no | Checkout del repo (por defecto `$HOME/house_finder`). |
+| `APIFY_TOKEN` | sí | Token de Apify; `deploy.sh` lo inyecta en `.env`. |
+| `DEEPSEEK_API_KEY` | sí | Clave del LLM; `deploy.sh` la inyecta en `.env`. |
 | `REGISTRY_USERNAME` | si el paquete es privado | Usuario GHCR (`oaicstef`). |
 | `REGISTRY_PASSWORD` | si el paquete es privado | PAT con `read:packages`. |
 

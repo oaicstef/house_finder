@@ -8,9 +8,24 @@ COMPOSE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$COMPOSE_DIR"
 
 if [ ! -f .env ]; then
-  echo "Falta $COMPOSE_DIR/.env. Copia .env.example y rellena los tokens." >&2
-  exit 1
+  cp .env.example .env
+  chmod 600 .env
+  echo "Creado .env desde .env.example"
 fi
+
+upsert_env() {
+  local key="$1" value="$2" tmp
+  [ -n "$value" ] || return 0
+  tmp="$(mktemp)"
+  grep -v "^${key}=" .env > "$tmp" || true
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  mv "$tmp" .env
+  chmod 600 .env
+}
+
+# Tokens inyectados por el workflow (secrets del repo) sin dejarlos en logs.
+upsert_env APIFY_TOKEN "${APIFY_TOKEN:-}"
+upsert_env DEEPSEEK_API_KEY "${DEEPSEEK_API_KEY:-}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker no está instalado o no está en PATH." >&2

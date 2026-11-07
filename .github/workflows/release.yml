@@ -93,6 +93,8 @@ jobs:
         env:
           IMAGE_TAG: ${{ needs.image.outputs.sha_tag }}
           APP_DIR: ${{ secrets.N100_DEPLOY_PATH }}
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
           REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
         with:
@@ -102,7 +104,7 @@ jobs:
           password: ${{ secrets.N100_PASSWORD }}
           key: ${{ secrets.N100_SSH_KEY }}
           port: ${{ secrets.N100_PORT || 22 }}
-          envs: IMAGE_TAG,APP_DIR,REGISTRY_USERNAME,REGISTRY_PASSWORD
+          envs: IMAGE_TAG,APP_DIR,APIFY_TOKEN,DEEPSEEK_API_KEY,REGISTRY_USERNAME,REGISTRY_PASSWORD
           command_timeout: 15m
           script: |
             set -euo pipefail
