@@ -101,7 +101,7 @@ jobs:
           key: ${{ secrets.N100_SSH_KEY }}
           port: ${{ secrets.N100_PORT || 22 }}
           envs: IMAGE_TAG,APP_DIR,REGISTRY_USERNAME,REGISTRY_PASSWORD
-          script_stop: true
+          command_timeout: 15m
           script: |
             set -euo pipefail
             APP_DIR="${APP_DIR:-$HOME/house_finder}"
