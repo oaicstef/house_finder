@@ -22,6 +22,10 @@ spec:
         # Fuerza el rollout al cambiar el perfil o la configuración.
         checksum/config: "REPLACE_ON_CONFIG_CHANGE"
     spec:
+      # El pipeline publica en GHCR y fija aquí el tag sha-<commit>; el Secret
+      # ghcr-login-secret lo crea el workflow de release si no existe.
+      imagePullSecrets:
+        - name: ghcr-login-secret
       # ARM64 (k8s sobre Ampere/Graviton/Raspberry Pi/clusters arm64).
       nodeSelector:
         kubernetes.io/arch: arm64
@@ -34,8 +38,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          # Sustituye por tu registro: ghcr.io/<org>/house-finder:<tag>
-          image: house-finder:latest
+          # Imagen publicada por .github/workflows/release.yml.
+          image: ghcr.io/oaicstef/house-finder:latest
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

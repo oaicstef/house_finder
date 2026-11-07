@@ -14,21 +14,34 @@ deploy/k8s/
 └── kustomization.yaml    # kubectl apply -k deploy/k8s
 ```
 
-## 1. Construir la imagen para ARM
+## 1. Imagen: la publica el pipeline
+
+El workflow `.github/workflows/release.yml` construye la imagen `linux/arm64` y la publica
+en GHCR en cada push a `main` y en cada tag `v*`:
+
+```
+ghcr.io/oaicstef/house-finder:latest
+ghcr.io/oaicstef/house-finder:latest-arm64
+ghcr.io/oaicstef/house-finder:<rama-o-tag>
+ghcr.io/oaicstef/house-finder:sha-<commit>
+```
+
+Después aplica estos manifiestos y fija el Deployment al tag `sha-<commit>`. Construir a
+mano solo hace falta para probar cambios sin publicar:
 
 ```bash
 docker buildx build --platform linux/arm64 \
-  -t ghcr.io/<org>/house-finder:0.1.0 --push .
+  -t ghcr.io/oaicstef/house-finder:0.1.0 --push .
 ```
 
 Si construyes en una máquina ARM (p. ej. un Mac Apple Silicon o una instancia Ampere) basta:
 
 ```bash
-docker build -t ghcr.io/<org>/house-finder:0.1.0 .
-docker push ghcr.io/<org>/house-finder:0.1.0
+docker build -t ghcr.io/oaicstef/house-finder:0.1.0 .
+docker push ghcr.io/oaicstef/house-finder:0.1.0
 ```
 
-Ajusta `images[].newTag` en `kustomization.yaml` (o `image:` en `deployment.yaml`).
+Ajusta `images[].newTag` en `kustomization.yaml` (o el tag con `kubectl set image`).
 
 ## 2. Crear el Secret (tokens)
 
@@ -75,6 +88,45 @@ El mismo perfil lo usan:
 
 Si el JSON es inválido, el pod no arranca y `kubectl logs` muestra el campo culpable
 (`CONFIGURATION_ERROR`).
+
+## CI/CD (GitHub Actions)
+
+| Workflow | Disparador | Función |
+|---|---|---|
+| `.github/workflows/coverage.yml` | PR y push a `main` | `pytest --cov`, resumen en el job y artefacto HTML/XML. |
+| `.github/workflows/security.yml` | PR, push a `main`, lunes 06:00 UTC | `pip-audit` + Trivy (fs/IaC e imagen), gate HIGH/CRITICAL. |
+| `.github/workflows/release.yml` | push a `main`, tags `v*`, manual | Build arm64 → GHCR → `kubectl apply -k` → imagen `sha-<commit>` → rollout. Con tag `v*`, GitHub Release. |
+
+### Secretos necesarios
+
+| Secreto | Contenido |
+|---|---|
+| `KUBE_CONFIG` | Kubeconfig con permisos sobre `house-finder`. |
+| `REGISTRY_USERNAME` | Usuario GHCR (p. ej. `oaicstef`). |
+| `REGISTRY_PASSWORD` | PAT con `read:packages`. |
+
+El workflow crea el namespace si falta y el secret de pull `ghcr-login-secret` solo la
+primera vez:
+
+```bash
+kubectl -n house-finder create secret docker-registry ghcr-login-secret \
+  --docker-server=ghcr.io \
+  --docker-username="$REGISTRY_USERNAME" \
+  --docker-password="$REGISTRY_PASSWORD" \
+  --docker-email="docker@github.com"
+```
+
+Si el paquete de GHCR es público, el pull secret no es imprescindible, pero se mantiene
+para que el despliegue funcione también con el paquete privado.
+
+### Despliegue manual
+
+```bash
+kubectl apply -k deploy/k8s
+kubectl -n house-finder set image deployment/house-finder \
+  api=ghcr.io/oaicstef/house-finder:<tag>
+kubectl -n house-finder rollout status deployment/house-finder --timeout=180s
+```
 
 ## Notas operativas
 

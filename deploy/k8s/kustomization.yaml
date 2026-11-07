@@ -13,5 +13,5 @@ resources:
 # Opcional: descomenta para versionar la plantilla (nunca con secretos reales).
 #  - secret.example.yaml
 images:
-  - name: house-finder
+  - name: ghcr.io/oaicstef/house-finder
     newTag: latest

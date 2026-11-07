@@ -1,5 +1,9 @@
 # Real Estate Search Agent
 
+![Build and Deploy](https://github.com/oaicstef/house_finder/actions/workflows/release.yml/badge.svg)
+![Test Coverage](https://github.com/oaicstef/house_finder/actions/workflows/coverage.yml/badge.svg)
+![Security Scan](https://github.com/oaicstef/house_finder/actions/workflows/security.yml/badge.svg)
+
 Backend de un **agente de búsqueda inmobiliaria personalizada**: scrapea Idealista y
 Fotocasa mediante actores de Apify, clasifica los anuncios con un LLM (DeepSeek vía SDK
 de OpenAI) y devuelve solo las viviendas que encajan con los criterios del usuario.
@@ -16,7 +20,8 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 | [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md) | Especificación técnica: ports, modelo de datos, flujo del job, excepciones y riesgos. |
 | [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
 | [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
-| [deploy/k8s/README.md](deploy/k8s/README.md) | Build ARM, Secret, `kubectl apply -k` y acceso con port-forward. |
+| [specs/github-deployment-pipeline/plan.md](specs/github-deployment-pipeline/plan.md) | Diseño del pipeline de CI/CD en GitHub Actions. |
+| [deploy/k8s/README.md](deploy/k8s/README.md) | Build ARM, Secret, `kubectl apply -k`, CI/CD y acceso con port-forward. |
 | `/docs` y `/redoc` (en ejecución) | OpenAPI interactivo autogenerado. |
 
 ## Cómo funciona
@@ -110,16 +115,44 @@ SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max
 - Un JSON inválido impide arrancar con `CONFIGURATION_ERROR` y el campo culpable en
   `details.fields`.
 
-## Despliegue en Kubernetes (ARM64)
+## CI/CD y despliegue en Kubernetes (ARM64)
+
+El repositorio se despliega solo con GitHub Actions (`.github/workflows/`):
+
+| Workflow | Disparador | Qué hace |
+|---|---|---|
+| `coverage.yml` | PR y push a `main` | Instala `requirements-dev.txt`, ejecuta `pytest --cov`, publica el resumen en el job y sube `htmlcov/` + `coverage.xml`. |
+| `security.yml` | PR, push a `main` y lunes 06:00 UTC | `pip-audit` sobre runtime y dev, Trivy filesystem/IaC y Trivy de la imagen; falla con HIGH/CRITICAL. |
+| `release.yml` | push a `main`, tags `v*` y manual | Construye la imagen `linux/arm64`, la publica en GHCR (`latest`, `latest-arm64`, `<ref>` y `sha-<commit>`), aplica `deploy/k8s` y espera el rollout. Con un tag `v*` crea además el GitHub Release. |
+
+`dependabot.yml` abre PRs agrupados para `pip`, GitHub Actions y la imagen base Docker.
+
+**Secretos del repositorio** (Settings → Secrets and variables → Actions):
+
+| Secreto | Uso |
+|---|---|
+| `KUBE_CONFIG` | Kubeconfig con permisos sobre el namespace `house-finder`. |
+| `REGISTRY_USERNAME` | Usuario GHCR para el pull secret del clúster. |
+| `REGISTRY_PASSWORD` | PAT con `read:packages` para ese pull secret. |
+
+`GITHUB_TOKEN` es implícito: publica en GHCR y crea el Release. El workflow crea el
+namespace y el secret `ghcr-login-secret` si no existen, y fija el Deployment al tag
+`sha-<commit>` para que cada despliegue sea reproducible.
+
+Despliegue manual (si hace falta saltarse el pipeline):
 
 ```bash
-docker buildx build --platform linux/arm64 -t ghcr.io/<org>/house-finder:0.1.0 --push .
+docker buildx build --platform linux/arm64 \
+  -t ghcr.io/oaicstef/house-finder:0.1.0 --push .
 kubectl apply -k deploy/k8s
+kubectl -n house-finder set image deployment/house-finder \
+  api=ghcr.io/oaicstef/house-finder:0.1.0
+kubectl -n house-finder rollout status deployment/house-finder
 kubectl -n house-finder port-forward svc/house-finder 8000:80
 ```
 
-Detalles (Secret, PVC, cambio del perfil con ConfigMap, réplica única por el scheduler) en
-[deploy/k8s/README.md](deploy/k8s/README.md).
+Detalles (Secret de tokens, PVC, cambio del perfil con ConfigMap, réplica única por el
+scheduler, pipeline) en [deploy/k8s/README.md](deploy/k8s/README.md).
 
 ## Variables de entorno
 
