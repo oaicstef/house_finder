@@ -27,6 +27,16 @@ upsert_env() {
 upsert_env APIFY_TOKEN "${APIFY_TOKEN:-}"
 upsert_env DEEPSEEK_API_KEY "${DEEPSEEK_API_KEY:-}"
 
+# Sin tokens reales la app arranca pero las búsquedas fallan: mejor fallar el job.
+for key in APIFY_TOKEN DEEPSEEK_API_KEY; do
+  value="$(grep -m1 "^${key}=" .env | cut -d= -f2- || true)"
+  if [ -z "$value" ] || [ "$value" = "replace-me" ]; then
+    echo "Falta un valor real para ${key}." >&2
+    echo "Añádelo como secret del repo (Settings > Secrets and variables > Actions)." >&2
+    exit 1
+  fi
+done
+
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker no está instalado o no está en PATH." >&2
   exit 1
