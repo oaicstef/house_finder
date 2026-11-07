@@ -169,3 +169,26 @@ Validación posterior: `trivy image` y `trivy fs` con `--exit-code 1` devuelven 
 contenedor arranca con raíz de solo lectura respondiendo 200 en `/health` y `/`.
 También se comprobó que el job de imagen del Release publica en GHCR; el job de despliegue
 queda pendiente de los secretos `KUBE_CONFIG`, `REGISTRY_USERNAME` y `REGISTRY_PASSWORD`.
+
+## Revisión 2026-11-07 (destino N100)
+
+El destino de despliegue cambia de Kubernetes a **Docker Compose en el N100**, siguiendo
+el enfoque del API de PadelReservation (checkout del repo en el servidor + `docker compose`
++ `restart`), pero automatizado desde `release.yml`.
+
+| Decisión | Cambio |
+|---|---|
+| Plataforma de imagen | `linux/arm64` → `linux/amd64`: el N100 es x86_64. Se elimina el tag `latest-arm64`. |
+| Job de despliegue | Sustituye `azure/k8s-set-context` + `kubectl` por `appleboy/ssh-action@v1`. |
+| Flujo | `git fetch/pull --ff-only` en `N100_DEPLOY_PATH` → `deploy/n100/deploy.sh sha-<commit>` → `docker compose pull` + `up -d` → espera a `healthy`; si falla, muestra logs y el job falla. |
+| Persistencia | Bind mount `deploy/n100/data:/data`; `deploy.sh` crea el directorio y lo hace escribible para el UID 10001. |
+| Configuración | `deploy/n100/.env` (tokens y perfil) vive solo en el N100; `.env.example` versionado. |
+| Secretos | `N100_HOST`, `N100_USER`, `N100_SSH_KEY` (obligatorios); `N100_PORT`, `N100_DEPLOY_PATH` (opcionales); `REGISTRY_*` solo si el paquete GHCR es privado. |
+| Kubernetes | Los manifiestos de `deploy/k8s` quedan como alternativa documentada; ya no los usa el pipeline. |
+
+Criterios de aceptación añadidos:
+
+- [ ] El job de imagen publica `ghcr.io/oaicstef/house-finder:sha-<commit>` para `linux/amd64`.
+- [ ] El job de deploy actualiza el checkout del N100 y deja el contenedor `healthy`.
+- [ ] `http://<n100>:<HOST_PORT>/health` responde 200 tras el despliegue.
+- [ ] Un tag `v*` publica además el GitHub Release.

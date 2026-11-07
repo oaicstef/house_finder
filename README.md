@@ -8,7 +8,8 @@ Backend de un **agente de búsqueda inmobiliaria personalizada**: scrapea Ideali
 Fotocasa mediante actores de Apify, clasifica los anuncios con un LLM (DeepSeek vía SDK
 de OpenAI) y devuelve solo las viviendas que encajan con los criterios del usuario.
 Incluye una búsqueda automática diaria a las 07:00 (APScheduler) con idempotencia por
-fecha + criterio, una **UI web con fotos** y despliegue en **Kubernetes ARM64**.
+fecha + criterio, una **UI web con fotos** y despliegue en el **N100 con Docker Compose**
+(los manifiestos de Kubernetes ARM64 se mantienen como alternativa).
 
 Construido con Clean Architecture (dominio → aplicación → infraestructura/API) y SOLID.
 
@@ -21,7 +22,8 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 | [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
 | [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
 | [specs/github-deployment-pipeline/plan.md](specs/github-deployment-pipeline/plan.md) | Diseño del pipeline de CI/CD en GitHub Actions. |
-| [deploy/k8s/README.md](deploy/k8s/README.md) | Build ARM, Secret, `kubectl apply -k`, CI/CD y acceso con port-forward. |
+| [deploy/n100/README.md](deploy/n100/README.md) | Destino del pipeline: Compose, secretos SSH, volumen y operación en el N100. |
+| [deploy/k8s/README.md](deploy/k8s/README.md) | Alternativa Kubernetes: build ARM, Secret, `kubectl apply -k` y port-forward. |
 | `/docs` y `/redoc` (en ejecución) | OpenAPI interactivo autogenerado. |
 
 ## Cómo funciona
@@ -71,7 +73,8 @@ app/
 │   └── routes.py            # endpoints delgados
 ├── web/                     # UI: index.html + styles.css + app.js (sin build)
 └── tests/                   # pytest + pytest-asyncio (sin APIs reales)
-deploy/k8s/                  # Namespace, ConfigMap, PVC, Deployment ARM64, Service
+deploy/n100/                 # Docker Compose del N100 (destino del pipeline)
+deploy/k8s/                  # Alternativa: Namespace, ConfigMap, PVC, Deployment ARM64, Service
 Dockerfile                   # imagen multi-arch (python:3.13-slim)
 specs/                       # planes por feature (skill plan-first)
 ```
@@ -115,7 +118,7 @@ SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max
 - Un JSON inválido impide arrancar con `CONFIGURATION_ERROR` y el campo culpable en
   `details.fields`.
 
-## CI/CD y despliegue en Kubernetes (ARM64)
+## CI/CD y despliegue en el N100
 
 El repositorio se despliega solo con GitHub Actions (`.github/workflows/`):
 
@@ -123,36 +126,39 @@ El repositorio se despliega solo con GitHub Actions (`.github/workflows/`):
 |---|---|---|
 | `coverage.yml` | PR y push a `main` | Instala `requirements-dev.txt`, ejecuta `pytest --cov`, publica el resumen en el job y sube `htmlcov/` + `coverage.xml`. |
 | `security.yml` | PR, push a `main` y lunes 06:00 UTC | `pip-audit` sobre runtime y dev, Trivy filesystem/IaC y Trivy de la imagen; falla con HIGH/CRITICAL. |
-| `release.yml` | push a `main`, tags `v*` y manual | Construye la imagen `linux/arm64`, la publica en GHCR (`latest`, `latest-arm64`, `<ref>` y `sha-<commit>`), aplica `deploy/k8s` y espera el rollout. Con un tag `v*` crea además el GitHub Release. |
+| `release.yml` | push a `main`, tags `v*` y manual | Construye la imagen `linux/amd64`, la publica en GHCR (`latest`, `<ref>` y `sha-<commit>`), entra por SSH en el N100, hace `git pull` y levanta `deploy/n100/docker-compose.yml` con ese tag. Con un tag `v*` crea además el GitHub Release. |
 
 `dependabot.yml` abre PRs agrupados para `pip`, GitHub Actions y la imagen base Docker.
 
 **Secretos del repositorio** (Settings → Secrets and variables → Actions):
 
-| Secreto | Uso |
-|---|---|
-| `KUBE_CONFIG` | Kubeconfig con permisos sobre el namespace `house-finder`. |
-| `REGISTRY_USERNAME` | Usuario GHCR para el pull secret del clúster. |
-| `REGISTRY_PASSWORD` | PAT con `read:packages` para ese pull secret. |
+| Secreto | Obligatorio | Uso |
+|---|---|---|
+| `N100_HOST` | sí | IP o host del N100 (p. ej. `192.168.0.63`). |
+| `N100_USER` | sí | Usuario SSH con acceso a Docker. |
+| `N100_SSH_KEY` | sí | Clave privada SSH sin passphrase. |
+| `N100_PORT` | no | Puerto SSH (22 por defecto). |
+| `N100_DEPLOY_PATH` | no | Checkout del repo en el N100 (`$HOME/house_finder` por defecto). |
+| `REGISTRY_USERNAME` | si el paquete es privado | Usuario GHCR (`oaicstef`). |
+| `REGISTRY_PASSWORD` | si el paquete es privado | PAT con `read:packages`. |
 
-`GITHUB_TOKEN` es implícito: publica en GHCR y crea el Release. El workflow crea el
-namespace y el secret `ghcr-login-secret` si no existen, y fija el Deployment al tag
-`sha-<commit>` para que cada despliegue sea reproducible.
+`GITHUB_TOKEN` es implícito: publica en GHCR y crea el Release. Cada despliegue usa el tag
+`sha-<commit>`, así que el N100 ejecuta exactamente la imagen construida para ese commit.
 
 Despliegue manual (si hace falta saltarse el pipeline):
 
 ```bash
-docker buildx build --platform linux/arm64 \
+docker buildx build --platform linux/amd64 \
   -t ghcr.io/oaicstef/house-finder:0.1.0 --push .
-kubectl apply -k deploy/k8s
-kubectl -n house-finder set image deployment/house-finder \
-  api=ghcr.io/oaicstef/house-finder:0.1.0
-kubectl -n house-finder rollout status deployment/house-finder
-kubectl -n house-finder port-forward svc/house-finder 8000:80
+# En el N100:
+cd ~/house_finder/deploy/n100
+cp .env.example .env   # solo la primera vez; rellena los tokens
+./deploy.sh 0.1.0
 ```
 
-Detalles (Secret de tokens, PVC, cambio del perfil con ConfigMap, réplica única por el
-scheduler, pipeline) en [deploy/k8s/README.md](deploy/k8s/README.md).
+Detalles del N100 (Compose, secretos, volumen, operación) en
+[deploy/n100/README.md](deploy/n100/README.md). El despliegue en Kubernetes ARM64 sigue
+disponible como alternativa en [deploy/k8s/README.md](deploy/k8s/README.md).
 
 ## Variables de entorno
 

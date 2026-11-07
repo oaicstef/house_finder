@@ -1,0 +1,32 @@
+name: house-finder
+
+services:
+  house-finder:
+    # El pipeline pasa IMAGE_TAG=sha-<commit>; en local cae en :latest.
+    image: ghcr.io/oaicstef/house-finder:${IMAGE_TAG:-latest}
+    container_name: house-finder
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=${TZ:-Europe/Madrid}
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    volumes:
+      # Resultados JSON persistentes (RESULTS_DIR=/data/results en .env).
+      - ./data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

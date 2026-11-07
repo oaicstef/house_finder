@@ -1,5 +1,10 @@
 # Despliegue en Kubernetes (ARM64)
 
+> **Alternativa.** El pipeline despliega por defecto en el **N100** con Docker Compose
+> (ver [`deploy/n100`](../n100/README.md)). Estos manifiestos se mantienen para ejecutar
+> en un clúster ARM64; para usarlos, cambia `platforms` a `linux/arm64,linux/amd64` en
+> `.github/workflows/release.yml` y restaura el job de despliegue con `kubectl`.
+
 Manifiestos para ejecutar el agente en un clúster **arm64** con la UI incluida, el job
 diario y una única réplica (el scheduler vive dentro del proceso).
 
