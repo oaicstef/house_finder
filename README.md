@@ -4,7 +4,7 @@ Backend de un **agente de búsqueda inmobiliaria personalizada**: scrapea Ideali
 Fotocasa mediante actores de Apify, clasifica los anuncios con un LLM (DeepSeek vía SDK
 de OpenAI) y devuelve solo las viviendas que encajan con los criterios del usuario.
 Incluye una búsqueda automática diaria a las 07:00 (APScheduler) con idempotencia por
-fecha + criterio.
+fecha + criterio, una **UI web con fotos** y despliegue en **Kubernetes ARM64**.
 
 Construido con Clean Architecture (dominio → aplicación → infraestructura/API) y SOLID.
 
@@ -14,6 +14,9 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | Guía de uso: tokens, actores de Apify, recetas `curl`, cliente Python, errores y resolución de problemas. |
 | [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md) | Especificación técnica: ports, modelo de datos, flujo del job, excepciones y riesgos. |
+| [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
+| [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
+| [deploy/k8s/README.md](deploy/k8s/README.md) | Build ARM, Secret, `kubectl apply -k` y acceso con port-forward. |
 | `/docs` y `/redoc` (en ejecución) | OpenAPI interactivo autogenerado. |
 
 ## Cómo funciona
@@ -40,8 +43,8 @@ uno, `relevance` (0.0-1.0) y `reason` en español.
 
 ```
 app/
-├── main.py                  # create_app(), lifespan, scheduler
-├── config.py                # Settings (BaseSettings) + validación al arranque
+├── main.py                  # create_app(), lifespan, scheduler, UI estática
+├── config.py                # Settings (BaseSettings) + perfil de búsqueda
 ├── domain/
 │   ├── models.py            # entidades y value objects (stdlib puro)
 │   ├── exceptions.py        # DomainException + code/http_status
@@ -52,6 +55,7 @@ app/
 ├── infrastructure/
 │   ├── scrapers/apify_scraper.py
 │   ├── classifiers/deepseek_classifier.py
+│   ├── geocoding/carto_ciudad_locator.py
 │   ├── repositories/          # memory (volátil) + json_file (persistente)
 │   └── logging_config.py    # structlog (JSON en prod, consola en dev)
 ├── api/
@@ -60,9 +64,11 @@ app/
 │   ├── middleware.py        # request_id + duration_ms
 │   ├── exception_handlers.py
 │   └── routes.py            # endpoints delgados
+├── web/                     # UI: index.html + styles.css + app.js (sin build)
 └── tests/                   # pytest + pytest-asyncio (sin APIs reales)
-specs/real-estate-search-agent/plan.md   # plan (skill plan-first)
-.github/skills/plan-first/SKILL.md       # skill reutilizable
+deploy/k8s/                  # Namespace, ConfigMap, PVC, Deployment ARM64, Service
+Dockerfile                   # imagen multi-arch (python:3.13-slim)
+specs/                       # planes por feature (skill plan-first)
 ```
 
 ## Instalación
@@ -82,11 +88,38 @@ cp .env.example .env            # rellena APIFY_TOKEN y DEEPSEEK_API_KEY
 uvicorn app.main:app --reload
 ```
 
+- **UI con fotos**: <http://127.0.0.1:8000/> (botón «Ejecutar búsqueda»)
 - Documentación interactiva: <http://127.0.0.1:8000/docs>
 - Health check: `GET /health`
 
 Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 `ConfigurationException` (`CONFIGURATION_ERROR`), nunca con un `KeyError`.
+
+## Perfil de búsqueda configurable
+
+El cuerpo de la búsqueda se define una sola vez en `SEARCH_PROFILE_JSON` y lo comparten el
+job diario, la UI y `POST /api/v1/search-profile/run`:
+
+```dotenv
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
+```
+
+- `GET /api/v1/search-profile` devuelve el perfil activo.
+- `POST /api/v1/search-profile/run` ejecuta exactamente ese perfil (`trigger: "profile"`).
+- `SEARCH_PROFILE_JSON=` (vacío) recupera los criterios heredados `DAILY_*`.
+- Un JSON inválido impide arrancar con `CONFIGURATION_ERROR` y el campo culpable en
+  `details.fields`.
+
+## Despliegue en Kubernetes (ARM64)
+
+```bash
+docker buildx build --platform linux/arm64 -t ghcr.io/<org>/house-finder:0.1.0 --push .
+kubectl apply -k deploy/k8s
+kubectl -n house-finder port-forward svc/house-finder 8000:80
+```
+
+Detalles (Secret, PVC, cambio del perfil con ConfigMap, réplica única por el scheduler) en
+[deploy/k8s/README.md](deploy/k8s/README.md).
 
 ## Variables de entorno
 
@@ -108,7 +141,8 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 | `DEEPSEEK_API_KEY` | — | **Obligatoria**. Clave del LLM. |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Endpoint compatible con OpenAI. |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | Modelo usado en la clasificación. |
-| `DAILY_SEARCH_*` | Madrid / 1500 € / 60 m² / 2 hab. | Criterios del job diario. |
+| `SEARCH_PROFILE_JSON` | cuerpo con CP 28031 + 5 km + año 2020 | Perfil único (job diario + UI). Vacío = usa `DAILY_*`. |
+| `DAILY_SEARCH_*` | Madrid / 1500 € / 60 m² / 2 hab. | Criterios del job diario (solo si no hay perfil). |
 | `DAILY_MUST_HAVE` | vacío (sin filtro) | Requisitos obligatorios del job diario, separados por comas (`piscina,padel`). |
 | `DAILY_POSTAL_CODE` | vacío | CP del job diario; requiere `DAILY_RADIUS_KM`. |
 | `DAILY_RADIUS_KM` | vacío | Radio (1-50 km) alrededor del CP del job diario. |
@@ -120,7 +154,10 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 
 | Método | Ruta | Descripción |
 |---|---|---|
+| `GET` | `/` | UI con fotos de los anuncios (botón «Ejecutar búsqueda»). |
 | `POST` | `/api/v1/searches` | Búsqueda síncrona. `201` + anuncios filtrados. `502` scraper, `503` clasificador, `422` validación. |
+| `GET` | `/api/v1/search-profile` | Perfil de búsqueda activo (`SEARCH_PROFILE_JSON`). |
+| `POST` | `/api/v1/search-profile/run` | Ejecuta el perfil configurado (`trigger: profile`). |
 | `GET` | `/api/v1/searches/{search_id}/results` | Resultados de una búsqueda previa. `404` `SEARCH_NOT_FOUND`. |
 | `POST` | `/api/v1/scheduled-searches/run` | Dispara el job diario. `executed=false` si ya se ejecutó hoy. |
 | `GET` | `/health` | Estado y si el scheduler está activo. |
@@ -170,7 +207,8 @@ pytest
 
 Sin llamadas reales a Apify, DeepSeek ni CartoCiudad: los puertos se sustituyen por fakes
 (`app/tests/conftest.py`). Cubre servicio de búsqueda, job diario, normalización del
-scraper, parseo del clasificador, endpoints y logging.
+scraper (incluidas fotos), parseo del clasificador, perfil configurable, UI estática y
+endpoints.
 
 ## Decisiones destacadas
 

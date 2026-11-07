@@ -21,8 +21,10 @@ from app.api.schemas import (
     HealthResponse,
     ScheduledRunResponse,
     SearchCreateRequest,
+    SearchProfileResponse,
     SearchResponse,
 )
+from app.domain.exceptions import ConfigurationException
 from app.domain.models import Trigger
 
 __all__ = ["health_router", "router"]
@@ -65,6 +67,40 @@ async def get_search_results(
     service: SearchServiceDep,
 ) -> SearchResponse:
     result = await service.get_results(search_id)
+    return SearchResponse.from_domain(result)
+
+
+@router.get(
+    "/search-profile",
+    response_model=SearchProfileResponse,
+    summary="Devuelve el perfil de búsqueda activo",
+    responses=_ERROR_RESPONSES,
+)
+async def get_search_profile(container: ContainerDep) -> SearchProfileResponse:
+    """Perfil que usan el job diario y la UI (``SEARCH_PROFILE_JSON``)."""
+    profile = container.settings.build_search_profile()
+    if profile is None:
+        raise ConfigurationException(
+            "SEARCH_PROFILE_JSON no está configurado; revisa DAILY_*",
+            details={"missing": ["SEARCH_PROFILE_JSON"]},
+        )
+    return SearchProfileResponse(source="profile", profile=profile)
+
+
+@router.post(
+    "/search-profile/run",
+    response_model=SearchResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Ejecuta el perfil de búsqueda configurado",
+    responses=_ERROR_RESPONSES,
+)
+async def run_search_profile(
+    service: SearchServiceDep,
+    container: ContainerDep,
+) -> SearchResponse:
+    """Lanza la búsqueda definida en ``SEARCH_PROFILE_JSON`` (o en ``DAILY_*``)."""
+    criteria = container.settings.build_daily_criteria()
+    result = await service.run_search(criteria, trigger=Trigger.PROFILE.value)
     return SearchResponse.from_domain(result)
 
 

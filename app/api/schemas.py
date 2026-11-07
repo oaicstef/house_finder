@@ -7,7 +7,7 @@ entidades (``to_domain``) o desde ellas (``from_domain``).
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -22,6 +22,7 @@ __all__ = [
     "PortalName",
     "ScheduledRunResponse",
     "SearchCreateRequest",
+    "SearchProfileResponse",
     "SearchResponse",
 ]
 
@@ -174,6 +175,7 @@ class ListingResponse(BaseModel):
     bathrooms: int | None
     location: str
     year_built: int | None
+    photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
     relevance: float
     reason: str
@@ -192,6 +194,7 @@ class ListingResponse(BaseModel):
             bathrooms=listing.bathrooms,
             location=listing.location,
             year_built=listing.year_built,
+            photos=list(listing.photos),
             amenities=list(listing.amenities),
             relevance=scored.relevance,
             reason=scored.reason,
@@ -236,6 +239,16 @@ class ScheduledRunResponse(BaseModel):
         description="Motivo por el que no se ejecutó (p. ej. already_executed_today)",
     )
     result: SearchResponse | None = None
+
+
+class SearchProfileResponse(BaseModel):
+    """Perfil de búsqueda activo (el que usa el job diario y la UI)."""
+
+    source: Literal["profile", "legacy"]
+    profile: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Cuerpo equivalente a POST /api/v1/searches para el perfil activo.",
+    )
 
 
 class HealthResponse(BaseModel):

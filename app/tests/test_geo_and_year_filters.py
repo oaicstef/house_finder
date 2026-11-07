@@ -565,7 +565,12 @@ async def test_carto_ciudad_locator_wraps_http_errors() -> None:
 
 
 def build_settings(**kwargs: Any) -> Settings:
-    return Settings(environment="test", enable_scheduler=False, **kwargs)
+    return Settings(
+        environment="test",
+        enable_scheduler=False,
+        search_profile_json="",
+        **kwargs,
+    )
 
 
 def test_daily_criteria_includes_geo_and_year() -> None:

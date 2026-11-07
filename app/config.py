@@ -6,6 +6,7 @@ Se valida al arrancar: si falta una clave obligatoria se lanza
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 from functools import lru_cache
@@ -23,6 +24,25 @@ load_dotenv()
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 Environment = Literal["development", "production", "test"]
+
+#: Perfil de búsqueda por defecto (job diario y UI). Se puede sustituir con
+#: ``SEARCH_PROFILE_JSON`` sin tocar código; ``SEARCH_PROFILE_JSON=`` vacío vuelve a
+#: los criterios ``DAILY_*``.
+DEFAULT_SEARCH_PROFILE: dict[str, Any] = {
+    "location": "Madrid",
+    "portals": ["idealista", "fotocasa"],
+    "max_price_eur": 900000,
+    "min_size_m2": 140,
+    "min_rooms": 4,
+    "max_results": 50,
+    "preferences": "Casa o chalet, padel cominitario, piscina comunitaria",
+    "must_have": ["padel"],
+    "postal_code": "28031",
+    "radius_km": 5,
+    "min_year_built": 2020,
+}
+
+DEFAULT_SEARCH_PROFILE_JSON = json.dumps(DEFAULT_SEARCH_PROFILE, ensure_ascii=False)
 
 # Variable de entorno -> atributo del modelo.
 REQUIRED_SECRETS: dict[str, str] = {
@@ -81,6 +101,8 @@ class Settings(BaseSettings):
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
     results_dir: str = "data/results"
+    #: Perfil de búsqueda compartido (job diario + UI + ejecución bajo demanda).
+    search_profile_json: str | None = DEFAULT_SEARCH_PROFILE_JSON
 
     @field_validator(
         "apify_max_charge_usd",
@@ -92,6 +114,7 @@ class Settings(BaseSettings):
         "daily_postal_code",
         "daily_radius_km",
         "daily_min_year_built",
+        "search_profile_json",
         mode="before",
     )
     @classmethod
@@ -132,8 +155,60 @@ class Settings(BaseSettings):
         """JSON en producción, consola legible en el resto de entornos."""
         return self.environment == "production"
 
+    def build_search_profile(self) -> dict[str, Any] | None:
+        """Perfil de búsqueda configurado (``None`` si se usa la ruta ``DAILY_*``).
+
+        Raises:
+            ConfigurationException: si el JSON no es válido o no cumple el contrato de
+                ``POST /api/v1/searches``.
+        """
+        raw = (self.search_profile_json or "").strip()
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ConfigurationException(
+                "SEARCH_PROFILE_JSON no es un JSON válido",
+                details={"error": exc.msg, "position": exc.pos},
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ConfigurationException(
+                "SEARCH_PROFILE_JSON debe ser un objeto JSON",
+                details={"type": type(payload).__name__},
+            )
+
+        # Import perezoso: la capa API depende de config, no al revés en el import.
+        from app.api.schemas import SearchCreateRequest
+
+        try:
+            SearchCreateRequest.model_validate(payload)
+        except ValidationError as exc:
+            raise ConfigurationException(
+                "SEARCH_PROFILE_JSON no cumple el contrato de búsqueda",
+                details={
+                    "fields": [
+                        {
+                            "field": ".".join(str(part) for part in error["loc"]) or "body",
+                            "msg": error["msg"],
+                        }
+                        for error in exc.errors()
+                    ]
+                },
+            ) from exc
+        return payload
+
     def build_daily_criteria(self) -> SearchCriteria:
-        """Criterios por defecto para la búsqueda diaria programada."""
+        """Criterios del job diario: perfil compartido o, si no hay, ``DAILY_*``."""
+        profile = self.build_search_profile()
+        if profile is not None:
+            from app.api.schemas import SearchCreateRequest
+
+            return SearchCreateRequest.model_validate(profile).to_domain()
+        return self._build_legacy_daily_criteria()
+
+    def _build_legacy_daily_criteria(self) -> SearchCriteria:
+        """Criterios del cron a partir de ``DAILY_*`` (compatibilidad)."""
         portals: list[Portal] = []
         for raw_portal in self.daily_search_portals.split(","):
             if not raw_portal.strip():

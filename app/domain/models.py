@@ -52,6 +52,8 @@ class Trigger(str, Enum):
     API = "api"
     SCHEDULER = "scheduler"
     MANUAL_JOB = "manual-job"
+    #: Ejecución del perfil configurado (botón de la UI / bajo demanda).
+    PROFILE = "profile"
 
 
 #: Nombre canónico de comodidad -> términos con los que el portal/usuario la nombra.
@@ -118,6 +120,8 @@ class Listing:
     year_built: int | None = None
     latitude: float | None = None
     longitude: float | None = None
+    #: URLs ``https`` de fotos del portal (máximo 6, deduplicadas).
+    photos: tuple[str, ...] = ()
     # ``compare=False`` evita que datos arbitrarios intervengan en igualdad/hash.
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
 

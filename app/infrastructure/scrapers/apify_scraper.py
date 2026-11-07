@@ -198,6 +198,52 @@ def _price_value(item: Mapping[str, Any]) -> float | None:
     return _to_float(_first_value(item, _FIELD_ALIASES["price"]))
 
 
+#: Tope de fotos por anuncio: suficiente para la UI sin inflar el payload.
+_MAX_PHOTOS = 6
+
+
+def _photos(item: Mapping[str, Any]) -> tuple[str, ...]:
+    """Extrae las URLs de fotos de la forma anidada de cada portal.
+
+    Idealista: ``multimedia.images[].url``. Fotocasa: ``multimedia[].url``.
+    Se aceptan también ``photos``/``images``/``pictures`` planos.
+    """
+
+    def collect(value: Any, found: list[str]) -> None:
+        if isinstance(value, str):
+            if value.startswith(("https://", "http://")):
+                found.append(value)
+            return
+        if isinstance(value, Mapping):
+            for key in ("url", "src", "image", "imageUrl"):
+                nested = value.get(key)
+                if isinstance(nested, str) and nested.startswith(("https://", "http://")):
+                    found.append(nested)
+                    return
+            return
+        if isinstance(value, Sequence):
+            for entry in value:
+                collect(entry, found)
+
+    found: list[str] = []
+    multimedia = item.get("multimedia")
+    if isinstance(multimedia, Mapping):
+        collect(multimedia.get("images"), found)
+    else:
+        collect(multimedia, found)
+    if not found:
+        for key in ("photos", "images", "pictures"):
+            collect(item.get(key), found)
+
+    unique: list[str] = []
+    for url in found:
+        if url not in unique:
+            unique.append(url)
+        if len(unique) >= _MAX_PHOTOS:
+            break
+    return tuple(unique)
+
+
 def _coordinates(item: Mapping[str, Any]) -> tuple[float | None, float | None]:
     """Idealista usa lat/lon planos; Fotocasa los anida en ``location``."""
     latitude = _to_float(item.get("latitude"))
@@ -641,6 +687,14 @@ class ApifyListingScraper:
         title = _first_value(item, _FIELD_ALIASES["title"]) or _suggested_title(item)
         description = _first_value(item, _FIELD_ALIASES["description"])
         latitude, longitude = _coordinates(item)
+        photos = _photos(item)
+        if photos:
+            self._logger.debug(
+                "listing_photos_extracted",
+                portal=portal.value,
+                listing_url=url.strip(),
+                photos_count=len(photos),
+            )
 
         return Listing(
             portal=portal,
@@ -656,6 +710,7 @@ class ApifyListingScraper:
             year_built=_year_built(item),
             latitude=latitude,
             longitude=longitude,
+            photos=photos,
             raw=dict(item),
         )
 

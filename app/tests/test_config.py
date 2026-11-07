@@ -9,8 +9,16 @@ from app.domain.exceptions import ConfigurationException
 
 
 def build_settings(**overrides: object) -> Settings:
-    """Configuración aislada del ``.env`` real del desarrollador."""
-    values: dict[str, object] = {"_env_file": None, "environment": "test"}
+    """Configuración aislada del ``.env`` real del desarrollador.
+
+    ``search_profile_json=""`` desactiva el perfil compartido para probar la ruta
+    heredada ``DAILY_*``.
+    """
+    values: dict[str, object] = {
+        "_env_file": None,
+        "environment": "test",
+        "search_profile_json": "",
+    }
     values.update(overrides)
     return Settings(**values)
 

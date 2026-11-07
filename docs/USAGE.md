@@ -17,7 +17,9 @@ para el resumen del proyecto, [../README.md](../README.md).
 8. [Interpretar la respuesta](#8-interpretar-la-respuesta)
 9. [Errores y cómo resolverlos](#9-errores-y-cómo-resolverlos)
 10. [Búsqueda diaria programada](#10-búsqueda-diaria-programada)
-11. [Modo sin credenciales (tests)](#11-modo-sin-credenciales-tests)
+11. [Perfil de búsqueda configurable y UI](#11-perfil-de-búsqueda-configurable-y-ui)
+12. [Despliegue en Kubernetes (ARM64)](#12-despliegue-en-kubernetes-arm64)
+13. [Modo sin credenciales (tests)](#13-modo-sin-credenciales-tests)
 
 ---
 
@@ -618,6 +620,11 @@ uvicorn app.main:app 2>&1 | grep 32afd95b
 Se ejecuta a las **07:00** en la zona `TIMEZONE` (por defecto `Europe/Madrid`), arrancada
 en el `lifespan` de FastAPI.
 
+> **Prioridad:** si `SEARCH_PROFILE_JSON` está definido (lo está por defecto, ver
+> [sección 11](#11-perfil-de-búsqueda-configurable-y-ui)), el cron usa **ese** perfil y las
+> variables `DAILY_*` de abajo se ignoran. `DAILY_*` solo aplica con
+> `SEARCH_PROFILE_JSON=` vacío.
+
 ```dotenv
 ENABLE_SCHEDULER=true
 TIMEZONE=Europe/Madrid
@@ -674,7 +681,79 @@ ENABLE_SCHEDULER=false
 El job nunca propaga excepciones: cualquier fallo se registra con `logger.exception` y
 `error_code` para no perder el error.
 
-## 11. Modo sin credenciales (tests)
+## 11. Perfil de búsqueda configurable y UI
+
+El cuerpo de la búsqueda vive en **una sola variable**, `SEARCH_PROFILE_JSON`, y lo usan el
+job diario, la UI y `POST /api/v1/search-profile/run`:
+
+```dotenv
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
+```
+
+| Acción | Cómo |
+|---|---|
+| Ver el perfil activo | `curl http://127.0.0.1:8000/api/v1/search-profile` |
+| Ejecutarlo | `curl -X POST http://127.0.0.1:8000/api/v1/search-profile/run` |
+| Cambiarlo | edita `SEARCH_PROFILE_JSON` y reinicia (en k8s, ConfigMap + `rollout restart`) |
+| Volver a `DAILY_*` | deja `SEARCH_PROFILE_JSON=` vacío |
+
+Formato: el mismo cuerpo que `POST /api/v1/searches`, en **una línea**. Si el JSON es
+inválido o incumple el contrato, el arranque falla con `CONFIGURATION_ERROR` y
+`details.fields` indica el campo.
+
+### La UI
+
+Abre <http://127.0.0.1:8000/>. La página muestra los criterios activos (CP, radio, precio,
+m², habitaciones, año, obligatorios) y un botón **Ejecutar búsqueda** que llama a
+`/api/v1/search-profile/run`.
+
+Cada tarjeta incluye:
+
+- **Foto** del anuncio (seis como máximo; si el portal bloquea el hotlink se muestra
+  «Sin foto»).
+- Precio, €/m², superficie, habitaciones, baños y año de construcción.
+- Ubicación, portal, comodidades detectadas, motivo del LLM y relevancia.
+- Enlace directo a Idealista/Fotocasa.
+
+Puedes ordenar por relevancia, precio, superficie o año sin volver a lanzar la búsqueda.
+La UI no tiene build ni dependencias externas: son tres ficheros estáticos en `app/web/`.
+
+> **Fotos**: se enlazan las URLs del portal (`listing.photos`, máximo 6). No se almacenan
+> binarios ni se reenvían a terceros.
+
+## 12. Despliegue en Kubernetes (ARM64)
+
+```bash
+# 1. Imagen (multi-arch; ARM64 explícito)
+docker buildx build --platform linux/arm64 -t ghcr.io/<org>/house-finder:0.1.0 --push .
+
+# 2. Secret con los tokens (nunca en git)
+kubectl -n house-finder create secret generic house-finder-secrets \
+  --from-literal=APIFY_TOKEN='...' --from-literal=DEEPSEEK_API_KEY='...'
+
+# 3. Manifiestos
+kubectl apply -k deploy/k8s
+kubectl -n house-finder rollout status deploy/house-finder
+
+# 4. UI
+kubectl -n house-finder port-forward svc/house-finder 8000:80
+# http://127.0.0.1:8000/
+```
+
+Qué incluye `deploy/k8s/`:
+
+| Recurso | Detalle |
+|---|---|
+| `Deployment` | `nodeSelector: kubernetes.io/arch: arm64`, `replicas: 1`, `strategy: Recreate`, probes `/health`, usuario no root. |
+| `ConfigMap` | Entorno + `SEARCH_PROFILE_JSON` (cambiar la búsqueda sin rebuild). |
+| `Secret` | `APIFY_TOKEN` y `DEEPSEEK_API_KEY` (plantilla en `secret.example.yaml`). |
+| `PVC` | 1 Gi en `/data` para `RESULTS_DIR=/data/results`. |
+| `Service` | `ClusterIP` puerto 80 → 8000. |
+
+`replicas: 1` es intencionado: APScheduler corre dentro del proceso y dos pods duplicarían
+el job diario. Ver [deploy/k8s/README.md](../deploy/k8s/README.md).
+
+## 13. Modo sin credenciales (tests)
 
 `ENVIRONMENT=test` omite la validación de credenciales, de modo que puedes explorar la API
 sin tokens (las llamadas reales a Apify/DeepSeek fallarán con `502`/`503`):
@@ -722,7 +801,8 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `DEEPSEEK_TIMEOUT_SECONDS` | `60` | no | |
 | `RELEVANCE_THRESHOLD` | `0.6` | no | 0.0-1.0 |
 | `RESULTS_DIR` | `data/results` | no | directorio de JSON; vacío = solo memoria |
-| `DAILY_*` | ver sección 10 | no | criterios del cron |
+| `SEARCH_PROFILE_JSON` | cuerpo CP 28031 + 5 km + 2020 | no | perfil único (cron + UI); vacío = `DAILY_*` |
+| `DAILY_*` | ver sección 10 | no | criterios del cron (solo sin perfil) |
 | `DAILY_MUST_HAVE` | vacío | no | requisitos obligatorios del cron (`piscina,padel`) |
 | `DAILY_POSTAL_CODE` | vacío | no | requiere `DAILY_RADIUS_KM` |
 | `DAILY_RADIUS_KM` | vacío | no | 1-50 km |

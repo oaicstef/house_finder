@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: house-finder-config
+  namespace: house-finder
+  labels:
+    app.kubernetes.io/name: house-finder
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  TIMEZONE: "Europe/Madrid"
+  ENABLE_SCHEDULER: "true"
+
+  # Actores de scraping verificados (esquemas distintos; el scraper los adapta).
+  APIFY_IDEALISTA_ACTOR: "igolaizola/idealista-scraper"
+  APIFY_FOTOCASA_ACTOR: "igolaizola/fotocasa-scraper"
+  SEARCH_OPERATION: "sale"
+  APIFY_MAX_ITEMS: "40"
+  APIFY_TIMEOUT_SECONDS: "600"
+  APIFY_MAX_CHARGE_USD: "0.15"
+
+  # Geocodificador de códigos postales (CartoCiudad, sin API key).
+  GEOCODING_BASE_URL: "https://www.cartociudad.es/geocoder/api/geocoder"
+  GEOCODING_TIMEOUT_SECONDS: "10"
+
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+  DEEPSEEK_MODEL: "deepseek-flash"
+  DEEPSEEK_TIMEOUT_SECONDS: "60"
+  RELEVANCE_THRESHOLD: "0.6"
+
+  # Resultados en el volumen persistente.
+  RESULTS_DIR: "/data/results"
+
+  # Perfil único de búsqueda: job diario + UI + POST /api/v1/search-profile/run.
+  # Cámbialo aquí y reinicia el pod; no requiere rebuild de la imagen.
+  SEARCH_PROFILE_JSON: '{"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}'

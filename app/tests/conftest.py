@@ -133,6 +133,7 @@ def make_listing(
     year_built: int | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
+    photos: tuple[str, ...] = (),
 ) -> Listing:
     return Listing(
         portal=portal,
@@ -147,6 +148,7 @@ def make_listing(
         year_built=year_built,
         latitude=latitude,
         longitude=longitude,
+        photos=photos,
     )
 
 

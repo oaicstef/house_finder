@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: house-finder-results
+  namespace: house-finder
+  labels:
+    app.kubernetes.io/name: house-finder
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Descomenta y ajusta si tu cluster no trae StorageClass por defecto.
+  # storageClassName: local-path
