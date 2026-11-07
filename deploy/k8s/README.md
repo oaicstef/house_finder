@@ -135,6 +135,8 @@ kubectl -n house-finder rollout status deployment/house-finder --timeout=180s
 | Arquitectura | `nodeSelector: kubernetes.io/arch: arm64`; la imagen `python:3.13-slim` es multi-arch. |
 | Réplicas | Mantén `replicas: 1` y `strategy: Recreate`: dos pods ejecutarían el cron dos veces. |
 | Persistencia | PVC `ReadWriteOnce` de 1 Gi. `fsGroup: 10001` permite escribir al usuario no root. |
+| Raíz de solo lectura | `readOnlyRootFilesystem: true`: la app únicamente escribe en `/data` (PVC). |
+| Imagen endurecida | El Dockerfile aplica `apt-get upgrade` y elimina `pip` tras instalar dependencias (sin CVEs vendorizados y sin herramientas de instalación en producción). |
 | Imágenes de anuncios | La UI enlaza las URLs del portal; no se almacenan binarios. Si el portal bloquea el hotlink, la tarjeta muestra «Sin foto». |
 | Sin autenticación | La API y la UI no tienen login: expón el Service solo en redes de confianza. |
 | Recursos | 100m/256Mi de request y 1 CPU/768Mi de límite; ajusta según el volumen de anuncios. |

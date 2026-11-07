@@ -74,7 +74,8 @@ spec:
               memory: 768Mi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Trivy KSV-0014: la app solo escribe en el volumen /data.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
       volumes:

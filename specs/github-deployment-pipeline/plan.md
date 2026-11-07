@@ -153,3 +153,19 @@ No aplica código de aplicación. Fallos esperados del pipeline y su traducción
 - [x] 6. Manifiestos k8s apuntando a GHCR.
 - [x] 7. Documentación del pipeline.
 - [ ] 8. Verificación en GitHub Actions tras el push.
+
+## Revisión 2026-11-07
+
+La primera ejecución real del pipeline en GitHub (`run 42412157361`) validó la cobertura y
+`pip-audit`, pero el gate de Trivy falló con hallazgos reales que había que resolver:
+
+| Hallazgo | Origen | Corrección |
+|---|---|---|
+| `KSV-0014` (HIGH) | `readOnlyRootFilesystem: false` en el Deployment | Se activa `true`; la app solo escribe en el PVC `/data`. Verificado con contenedor `--read-only`. |
+| `CVE-2026-76844` (zlib1g) | Paquete Debian de la base con parche disponible | `apt-get -y upgrade` en el Dockerfile. |
+| `CVE-2026-114613`, `GHSA-6v7p-g79w-8964` (msgpack), `CVE-2025-47273` (setuptools), `CVE-2026-97687/97689` (urllib3) | Librerías vendorizadas dentro de `pip` en la imagen | Se elimina `pip` y su `dist-info` tras instalar `requirements.txt`; el runtime no instala nada. |
+
+Validación posterior: `trivy image` y `trivy fs` con `--exit-code 1` devuelven 0, y el
+contenedor arranca con raíz de solo lectura respondiendo 200 en `/health` y `/`.
+También se comprobó que el job de imagen del Release publica en GHCR; el job de despliegue
+queda pendiente de los secretos `KUBE_CONFIG`, `REGISTRY_USERNAME` y `REGISTRY_PASSWORD`.
