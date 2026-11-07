@@ -24,6 +24,10 @@ Si el contenedor no llega a `healthy` en 60 s, el job falla y muestra los últim
 El contenedor anterior se reemplaza solo cuando la nueva imagen arranca correctamente
 (`docker compose up -d` recrea el servicio; el healthcheck falla el despliegue).
 
+Si el paquete de GHCR es privado y no hay credenciales (`REGISTRY_*`), el `pull` falla y
+`deploy.sh` construye la imagen **desde el checkout del N100** (mismo enfoque que el API de
+Padel: `docker compose build`). En ese caso no necesitas secretos de registro.
+
 ## Configuración inicial (una sola vez)
 
 En el N100:
@@ -51,7 +55,8 @@ Settings → Secrets and variables → Actions:
 |---|---|---|
 | `N100_HOST` | sí | IP o host del N100 (p. ej. `192.168.0.63`). |
 | `N100_USER` | sí | Usuario SSH con acceso a Docker. |
-| `N100_SSH_KEY` | sí | Clave privada SSH (sin passphrase; la pública en `~/.ssh/authorized_keys`). |
+| `N100_PASSWORD` | sí | Contraseña SSH del usuario del N100. |
+| `N100_SSH_KEY` | alternativa | Clave privada SSH sin passphrase (si no usas contraseña). |
 | `N100_PORT` | no | Puerto SSH (por defecto 22). |
 | `N100_DEPLOY_PATH` | no | Checkout del repo (por defecto `$HOME/house_finder`). |
 | `REGISTRY_USERNAME` | si el paquete es privado | Usuario GHCR (`oaicstef`). |

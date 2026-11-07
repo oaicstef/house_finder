@@ -98,6 +98,8 @@ jobs:
         with:
           host: ${{ secrets.N100_HOST }}
           username: ${{ secrets.N100_USER }}
+          # Autenticación por contraseña (N100_PASSWORD) o por clave (N100_SSH_KEY).
+          password: ${{ secrets.N100_PASSWORD }}
           key: ${{ secrets.N100_SSH_KEY }}
           port: ${{ secrets.N100_PORT || 22 }}
           envs: IMAGE_TAG,APP_DIR,REGISTRY_USERNAME,REGISTRY_PASSWORD

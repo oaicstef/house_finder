@@ -3,7 +3,12 @@ name: house-finder
 services:
   house-finder:
     # El pipeline pasa IMAGE_TAG=sha-<commit>; en local cae en :latest.
+    # Si no se puede hacer pull (paquete privado sin login), deploy.sh construye
+    # la imagen desde este checkout.
     image: ghcr.io/oaicstef/house-finder:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
     container_name: house-finder
     restart: unless-stopped
     env_file:

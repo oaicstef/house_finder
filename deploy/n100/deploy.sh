@@ -27,7 +27,10 @@ if [ -n "${REGISTRY_PASSWORD:-}" ]; then
 fi
 
 echo "Desplegando house-finder:${IMAGE_TAG} en $COMPOSE_DIR"
-IMAGE_TAG="$IMAGE_TAG" docker compose pull house-finder
+if ! IMAGE_TAG="$IMAGE_TAG" docker compose pull house-finder; then
+  echo "No se pudo descargar la imagen; construyendo desde el checkout..." >&2
+  IMAGE_TAG="$IMAGE_TAG" docker compose build house-finder
+fi
 IMAGE_TAG="$IMAGE_TAG" docker compose up -d --remove-orphans
 
 echo "Esperando a que el contenedor esté healthy..."

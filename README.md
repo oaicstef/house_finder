@@ -136,11 +136,12 @@ El repositorio se despliega solo con GitHub Actions (`.github/workflows/`):
 |---|---|---|
 | `N100_HOST` | sí | IP o host del N100 (p. ej. `192.168.0.63`). |
 | `N100_USER` | sí | Usuario SSH con acceso a Docker. |
-| `N100_SSH_KEY` | sí | Clave privada SSH sin passphrase. |
+| `N100_PASSWORD` | sí | Contraseña SSH del usuario del N100 (alternativa a la clave). |
+| `N100_SSH_KEY` | alternativa | Clave privada SSH sin passphrase (si no usas contraseña). |
 | `N100_PORT` | no | Puerto SSH (22 por defecto). |
 | `N100_DEPLOY_PATH` | no | Checkout del repo en el N100 (`$HOME/house_finder` por defecto). |
-| `REGISTRY_USERNAME` | si el paquete es privado | Usuario GHCR (`oaicstef`). |
-| `REGISTRY_PASSWORD` | si el paquete es privado | PAT con `read:packages`. |
+| `REGISTRY_USERNAME` | opcional | Usuario GHCR (`oaicstef`); sin él, el N100 construye la imagen desde el checkout. |
+| `REGISTRY_PASSWORD` | opcional | PAT con `read:packages` para descargar la imagen ya construida. |
 
 `GITHUB_TOKEN` es implícito: publica en GHCR y crea el Release. Cada despliegue usa el tag
 `sha-<commit>`, así que el N100 ejecuta exactamente la imagen construida para ese commit.
