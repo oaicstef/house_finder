@@ -188,7 +188,9 @@ el enfoque del API de PadelReservation (checkout del repo en el servidor + `dock
 
 Criterios de aceptación añadidos:
 
-- [ ] El job de imagen publica `ghcr.io/oaicstef/house-finder:sha-<commit>` para `linux/amd64`.
-- [ ] El job de deploy actualiza el checkout del N100 y deja el contenedor `healthy`.
+- [x] El job de imagen publica `ghcr.io/oaicstef/house-finder:sha-<commit>` para `linux/amd64` (run 42416874042).
+- [x] La imagen amd64 arranca con raíz de solo lectura y `/data` escribible: `/health` y `/` responden 200 (verificado con emulación QEMU).
+- [x] El comando del `healthcheck` del compose se ejecuta correctamente dentro del contenedor.
+- [ ] El job de deploy actualiza el checkout del N100 y deja el contenedor `healthy` (pendiente de `N100_HOST`/`N100_USER`/`N100_SSH_KEY`).
 - [ ] `http://<n100>:<HOST_PORT>/health` responde 200 tras el despliegue.
 - [ ] Un tag `v*` publica además el GitHub Release.
