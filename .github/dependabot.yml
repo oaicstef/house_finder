@@ -1,0 +1,76 @@
+version: 2
+
+# Dependabot opens one pull request per dependency, and one per security
+# advisory when security updates are enabled. `groups` collapses those into a
+# handful of PRs. A group only applies to the update type named in
+# `applies-to`, which defaults to `version-updates` — so security updates need
+# their own explicit group, otherwise each advisory still gets its own PR.
+
+updates:
+  # ----------------------------------------------------------------
+  # Runtime Python dependencies
+  # ----------------------------------------------------------------
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      python-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      python-major:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+
+  # ----------------------------------------------------------------
+  # Workflow actions
+  # ----------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      actions:
+        applies-to: version-updates
+        patterns:
+          - "*"
+
+  # ----------------------------------------------------------------
+  # Base image (python:3.13-slim)
+  # ----------------------------------------------------------------
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      docker:
+        applies-to: version-updates
+        patterns:
+          - "*"

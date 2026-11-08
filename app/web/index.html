@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Buscador inmobiliario</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar__inner">
+        <div>
+          <h1>Buscador inmobiliario</h1>
+          <p class="topbar__hint">
+            Perfil configurado con <code>SEARCH_PROFILE_JSON</code>. El mismo criterio usa el
+            job diario de las 07:00.
+          </p>
+        </div>
+        <form id="run-form" class="topbar__actions">
+          <label class="sort">
+            Ordenar
+            <select id="sort-select">
+              <option value="relevance">Relevancia</option>
+              <option value="price-asc">Precio: menor a mayor</option>
+              <option value="price-desc">Precio: mayor a menor</option>
+              <option value="size-desc">Superficie: mayor a menor</option>
+              <option value="year-desc">Año: más reciente</option>
+            </select>
+          </label>
+          <button type="submit" id="run-button">Ejecutar búsqueda</button>
+        </form>
+      </div>
+      <ul id="criteria" class="criteria" aria-label="Criterios de búsqueda"></ul>
+    </header>
+
+    <main class="container">
+      <section id="status" class="status" role="status" aria-live="polite"></section>
+      <section id="summary" class="summary" hidden></section>
+      <section id="results" class="grid" aria-label="Anuncios encontrados"></section>
+      <template id="card-template">
+        <article class="card">
+          <a class="card__media" target="_blank" rel="noopener noreferrer">
+            <img alt="" loading="lazy" referrerpolicy="no-referrer" />
+            <span class="card__placeholder" hidden>Sin foto</span>
+            <span class="card__portal"></span>
+          </a>
+          <div class="card__body">
+            <h2 class="card__title"></h2>
+            <p class="card__location"></p>
+            <p class="card__price"></p>
+            <ul class="card__facts"></ul>
+            <ul class="card__amenities"></ul>
+            <p class="card__reason"></p>
+            <div class="card__footer">
+              <span class="card__score"></span>
+              <a class="card__link" target="_blank" rel="noopener noreferrer">Ver anuncio</a>
+            </div>
+          </div>
+        </article>
+      </template>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

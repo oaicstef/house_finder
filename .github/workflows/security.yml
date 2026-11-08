@@ -1,0 +1,114 @@
+name: Security Scan — house_finder
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # Weekly, every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  # ----------------------------------------------------------------
+  # Dependency advisories (SCA) for the Python runtime and dev deps
+  # ----------------------------------------------------------------
+  dependencies:
+    name: Dependency Audit (pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit report
+        run: |
+          pip-audit -r requirements.txt --format json --output pip-audit.json || true
+          pip-audit -r requirements-dev.txt --format json --output pip-audit-dev.json || true
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-reports
+          path: |
+            pip-audit.json
+            pip-audit-dev.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Gate — fail on known runtime advisories
+        run: pip-audit -r requirements.txt
+
+      - name: Gate — fail on known dev advisories
+        run: pip-audit -r requirements-dev.txt
+
+  # ----------------------------------------------------------------
+  # Filesystem scan: dependencies, Dockerfile and k8s manifests
+  # ----------------------------------------------------------------
+  trivy-filesystem:
+    name: Trivy — Filesystem & IaC
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Scan repository for vulnerabilities and misconfigurations
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  # ----------------------------------------------------------------
+  # Container image scan (built locally, never pushed)
+  # ----------------------------------------------------------------
+  trivy-image:
+    name: Trivy — Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t house-finder:scan .
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: house-finder:scan
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table

@@ -181,6 +181,11 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
             "max_results": criteria.max_results,
             "preferences": criteria.preferences,
             "must_have": list(criteria.must_have),
+            "postal_code": criteria.postal_code,
+            "radius_km": criteria.radius_km,
+            "latitude": criteria.latitude,
+            "longitude": criteria.longitude,
+            "min_year_built": criteria.min_year_built,
         },
         "listings": [
             {
@@ -192,6 +197,8 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
                 "rooms": scored.listing.rooms,
                 "bathrooms": scored.listing.bathrooms,
                 "location": scored.listing.location,
+                "year_built": scored.listing.year_built,
+                "photos": list(scored.listing.photos),
                 "description": scored.listing.description,
                 "amenities": list(scored.listing.amenities),
                 "price_per_m2": scored.listing.price_per_m2,
@@ -215,6 +222,11 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
         max_results=criteria_payload.get("max_results", 40),
         preferences=criteria_payload.get("preferences"),
         must_have=tuple(criteria_payload.get("must_have") or ()),
+        postal_code=criteria_payload.get("postal_code"),
+        radius_km=criteria_payload.get("radius_km"),
+        latitude=criteria_payload.get("latitude"),
+        longitude=criteria_payload.get("longitude"),
+        min_year_built=criteria_payload.get("min_year_built"),
     )
     listings = tuple(
         ScoredListing(
@@ -229,6 +241,8 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
                 bathrooms=item.get("bathrooms"),
                 description=item.get("description"),
                 amenities=tuple(item.get("amenities") or ()),
+                year_built=item.get("year_built"),
+                photos=tuple(item.get("photos") or ()),
             ),
             relevance=float(item["relevance"]),
             reason=item.get("reason", ""),

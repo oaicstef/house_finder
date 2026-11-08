@@ -13,6 +13,7 @@ __all__ = [
     "ConfigurationException",
     "ClassifierException",
     "DomainException",
+    "GeoLocationException",
     "RepositoryException",
     "ScraperException",
     "SearchNotFoundError",
@@ -86,6 +87,14 @@ class ConfigurationException(DomainException):
     code = "CONFIGURATION_ERROR"
     http_status = 500
     default_message = "Configuración de la aplicación inválida"
+
+
+class GeoLocationException(DomainException):
+    """Fallo del proveedor de geocodificación (resolución de códigos postales)."""
+
+    code = "GEO_LOCATION_FAILURE"
+    http_status = 502
+    default_message = "No se ha podido resolver la ubicación solicitada"
 
 
 class RepositoryException(DomainException):

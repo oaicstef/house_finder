@@ -2,6 +2,7 @@
 
 Guía práctica para poner en marcha y consumir el agente de búsqueda inmobiliaria.
 Para el diseño interno consulta [../specs/real-estate-search-agent/plan.md](../specs/real-estate-search-agent/plan.md);
+para los filtros de radio y año, [../specs/search-geo-year-filters/plan.md](../specs/search-geo-year-filters/plan.md);
 para el resumen del proyecto, [../README.md](../README.md).
 
 ## Índice
@@ -16,7 +17,9 @@ para el resumen del proyecto, [../README.md](../README.md).
 8. [Interpretar la respuesta](#8-interpretar-la-respuesta)
 9. [Errores y cómo resolverlos](#9-errores-y-cómo-resolverlos)
 10. [Búsqueda diaria programada](#10-búsqueda-diaria-programada)
-11. [Modo sin credenciales (tests)](#11-modo-sin-credenciales-tests)
+11. [Perfil de búsqueda configurable y UI](#11-perfil-de-búsqueda-configurable-y-ui)
+12. [Despliegue en Kubernetes (ARM64)](#12-despliegue-en-kubernetes-arm64)
+13. [Modo sin credenciales (tests)](#13-modo-sin-credenciales-tests)
 
 ---
 
@@ -158,11 +161,15 @@ SEARCH_OPERATION=sale
 
 # Actores (salvo que uses los tuyos, deja estos)
 APIFY_IDEALISTA_ACTOR=igolaizola/idealista-scraper
-APIFY_FOTOCASA_ACTOR=
+APIFY_FOTOCASA_ACTOR=igolaizola/fotocasa-scraper
 
 APIFY_MAX_ITEMS=40
 APIFY_TIMEOUT_SECONDS=600
 APIFY_MAX_CHARGE_USD=0.15
+
+# Geocodificador de códigos postales (radio geográfico)
+GEOCODING_BASE_URL=https://www.cartociudad.es/geocoder/api/geocoder
+GEOCODING_TIMEOUT_SECONDS=10
 
 RELEVANCE_THRESHOLD=0.5
 ```
@@ -180,11 +187,16 @@ Cada actor tiene su propio vocabulario y el scraper lo adapta automáticamente (
 | `operation` | `sale` \| `rent` | `buy` \| `rent` |
 | `propertyType` | `homes` | `home` |
 | `country` | `es` (obligatorio) | no aplica |
-| `minPrice`/`maxPrice`/`minSize` | **string** (`"900000"`) | **entero** (`900000`) |
+| `minPrice`/`maxPrice`/`minSize` | **string** y **escalones cerrados** | **entero** y valor libre |
+| Búsqueda por radio | `latitude`/`longitude` + `distanceKm` | `latitude`/`longitude` + `distanceKm` |
 
-Ambos comparten `location`, `maxItems` y `minPrice`/`maxPrice`/`minSize`. Los portales
-**sin actor configurado se omiten** con un `WARNING` (`scraper_portal_skipped`) en lugar de
-tumbar la búsqueda; si ninguno está configurado, se lanza `ScraperException`.
+> **Idealista rechaza valores intermedios.** Su esquema solo admite
+> `minSize`/`maxSize` ∈ {0, 60, 80, 100, …, 300} y precios en escalones
+> (`500`–`3000` y `50000`–`4000000`). Cualquier otro valor devuelve
+> `400 InvalidRequestError: Field input.minSize must be equal to one of the allowed values`.
+> El scraper ajusta automáticamente al escalón **permisivo** (mínimos hacia abajo,
+> máximos hacia arriba) y deja el valor exacto para el filtro duro local; el ajuste se
+> registra como `scraper_input_snapped` (DEBUG). Fotocasa no necesita ajuste.
 
 ### 4.4.1 Esquema de salida por portal
 
@@ -200,6 +212,9 @@ que faltan, así que **los dos actores verificados funcionan sin tocar código**
 | Título | campo propio o `suggestedTexts.title` | **no existe**: se compone de `street` + `number` + niveles de `location` |
 | Ubicación | `address` (texto) | `location.level8Name`/`level7Name`/`level5Name` (objeto) |
 | Comodidades | `features.hasSwimmingPool`, … | `features` solo trae ids (`{"id": "17"}`); se leen del **slug** (`…-jardin-piscina/190094194/d`) |
+| Año de construcción | `yearBuilt`/`constructionYear` o la descripción | `antiquity` (antigüedad en años) o la descripción |
+| Fotos | `multimedia.images[].url` | `multimedia[].url` (máximo 6) |
+| Coordenadas | `latitude`/`longitude` planos | `location.latitude`/`location.longitude` |
 
 > **Fotocasa** está validado en vivo (build `zQ6P2E7A5hwEubfcJ`): los 3 anuncios de una
 > ejecución se normalizaron con precio, superficie, baños y enlace. Viene desactivado por
@@ -209,6 +224,16 @@ que faltan, así que **los dos actores verificados funcionan sin tocar código**
 > Las comodidades de Fotocasa se deducen del slug de la URL, reutilizando los sinónimos de
 > `AMENITY_LABELS` (`swimming_pool` → piscina, `garden` → jardín, …). Así `must_have`
 > funciona igual en los dos portales.
+
+### 4.4.2 Entrada común
+
+Ambos comparten `location`, `maxItems` y `minPrice`/`maxPrice`/`minSize`. Cuando hay
+origen geográfico, el scraper omite `location` y envía `latitude`, `longitude` y
+`distanceKm`. Los portales **sin actor configurado se omiten** con un `WARNING`
+(`scraper_portal_skipped`) en lugar de tumbar la búsqueda; si ninguno está configurado, se
+lanza `ScraperException`. Si un actor responde con 0 anuncios se registra
+`scraper_portal_returned_no_listings` con la ubicación resuelta, para que el portal no
+desaparezca en silencio de los resultados.
 
 ### 4.5 Elegir los actores
 
@@ -227,14 +252,15 @@ APIFY_MAX_ITEMS=40           # tope por portal
 APIFY_TIMEOUT_SECONDS=300
 ```
 
-El scraper envía al actor este input (`location`, `operation`, `maxItems` y, si están
-definidos, `minPrice`, `maxPrice`, `minSize`, `minRooms`). Si tu actor usa otros nombres
-de campo, ajústalo en `_build_run_input` en
+El scraper envía al actor este input (`location` o `latitude`/`longitude` + `distanceKm`,
+`operation`, `maxItems` y, si están definidos, `minPrice`, `maxPrice`, `minSize`). Si tu
+actor usa otros nombres de campo, ajústalo en `_build_run_input` en
 [`app/infrastructure/scrapers/apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py).
 
 El normalizador reconoce varias claves por campo (`url`/`link`/`detailUrl`,
-`price`/`priceEur`/`priceAmount`, `size`/`squareMeters`/`surface`, ...), así que la
-mayoría de actores funcionan sin cambios.
+`price`/`priceEur`/`priceAmount`, `size`/`squareMeters`/`surface`, ...), además de las
+coordenadas planas o anidadas y del año de construcción
+(`yearBuilt`/`constructionYear`/... o «construido en 2021» en la descripción).
 
 ## 5. Arrancar el servidor
 
@@ -329,7 +355,45 @@ Las `amenities` (`swimming_pool`, `garden`, `terrace`, `air_conditioning`, `lift
 verificados: si pides piscina y no aparece `swimming_pool`, el modelo sabe que no debe
 suponerla.
 
-### 6.1 Búsqueda completa
+### 6.1 Radio geográfico y año de construcción
+
+Para buscar a menos de 5 km del código postal **28031** (Villa de Vallecas, Madrid) y
+exigir construcción desde **2020**:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/searches \
+  -H "Content-Type: application/json" \
+  -d '{
+    "location": "Madrid",
+    "portals": ["idealista", "fotocasa"],
+    "max_price_eur": 900000,
+    "min_size_m2": 150,
+    "min_rooms": 4,
+    "max_results": 50,
+    "preferences": "Casa o chalet, piscina comunitaria, pádel comunitario",
+    "must_have": ["padel"],
+    "postal_code": "28031",
+    "radius_km": 5,
+    "min_year_built": 2020
+  }'
+```
+
+- **`postal_code` + `radius_km`**: el CP se resuelve con [CartoCiudad](https://www.cartociudad.es/)
+  (servicio público del IGN, sin API key) a su centroide. Los actores reciben
+  `latitude`, `longitude` y `distanceKm`; `location` se usa solo como etiqueta.
+- **Alternativa sin CP**: `"latitude": 40.378766, "longitude": -3.602295, "radius_km": 5`.
+  No se puede combinar `postal_code` con `latitude`/`longitude`.
+- **`min_year_built`**: filtro duro cuando el portal publica el año (`year_built` en la
+  respuesta). Si no consta, el LLM exige que la descripción lo confirme; los anuncios sin
+  año pueden quedar fuera.
+- **Límites**: `radius_km` entre 1 y 50, CP de 5 dígitos y año entre 1800 y el actual + 1.
+- **Precio y superficie**: en Idealista se ajustan solos a sus escalones (p. ej. 90 m² →
+  80 m²); el filtro duro mantiene el valor exacto que pediste.
+- **Radio aproximado**: se mide desde el centroide del CP; el área real del código postal
+  puede ser irregular. El scraper re-filtra por Haversine cuando el anuncio publica
+  coordenadas.
+
+### 6.2 Búsqueda completa
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/searches \
@@ -376,13 +440,13 @@ Respuesta real (`201 Created`):
 }
 ```
 
-### 6.2 Recuperar resultados previos
+### 6.3 Recuperar resultados previos
 
 ```bash
 curl http://127.0.0.1:8000/api/v1/searches/329f986c-2bbd-405e-8ce6-8385428cac8d/results
 ```
 
-### 6.3 Disparar el job diario manualmente
+### 6.4 Disparar el job diario manualmente
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/scheduled-searches/run
@@ -400,7 +464,7 @@ Segunda llamada del mismo día (`200`, idempotente):
 {"executed": false, "reason": "already_executed_today", "result": null}
 ```
 
-### 6.4 Propagar un `request_id` propio
+### 6.5 Propagar un `request_id` propio
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/searches \
@@ -563,9 +627,12 @@ Todos los errores comparten el mismo envoltorio:
 
 | HTTP | `code` | Causa habitual | Solución |
 |---|---|---|---|
-| `422` | `VALIDATION_ERROR` | Body inválido, `min_price_eur > max_price_eur`, UUID mal formado | Corrige el campo señalado en `details.fields` |
+| `422` | `VALIDATION_ERROR` | Body inválido, `min_price_eur > max_price_eur`, UUID mal formado, radio sin origen, CP+coordenadas o año fuera de rango | Corrige el campo señalado en `details.fields` |
+| `422` | `POSTAL_CODE_NOT_FOUND` | El geocodificador no encuentra el código postal | Revisa `postal_code` |
+| `422` | `INVALID_POSTAL_CODE` | CP con formato distinto de 5 dígitos | Usa un CP español de 5 dígitos |
 | `404` | `SEARCH_NOT_FOUND` | `search_id` inexistente (o `RESULTS_DIR` vacío y proceso reiniciado) | Relanza la búsqueda |
-| `502` | `SCRAPER_FAILURE` | Token de Apify inválido, actor inexistente, cuota agotada, timeout | Revisa `APIFY_TOKEN`, los IDs de actor y la cuota |
+| `502` | `SCRAPER_FAILURE` | Token de Apify inválido, actor inexistente, cuota agotada, timeout o **input rechazado por el actor** | Revisa los logs: `error_type` y el mensaje de Apify indican el campo inválido |
+| `502` | `GEO_LOCATION_FAILURE` | CartoCiudad no responde o devuelve una respuesta no procesable | Reintenta o revisa `GEOCODING_BASE_URL` y `GEOCODING_TIMEOUT_SECONDS` |
 | `503` | `CLASSIFIER_FAILURE` | Clave de DeepSeek inválida, cuota, respuesta no JSON | Revisa `DEEPSEEK_API_KEY` y `DEEPSEEK_MODEL` |
 | `500` | `CONFIGURATION_ERROR` | Faltan variables obligatorias | Rellena `.env` |
 | `500` | `INTERNAL_ERROR` | Fallo inesperado | Busca `unhandled_exception` en los logs con el `request_id` |
@@ -617,6 +684,11 @@ anuncios, pero ninguno pasó los filtros).
 Se ejecuta a las **07:00** en la zona `TIMEZONE` (por defecto `Europe/Madrid`), arrancada
 en el `lifespan` de FastAPI.
 
+> **Prioridad:** si `SEARCH_PROFILE_JSON` está definido (lo está por defecto, ver
+> [sección 11](#11-perfil-de-búsqueda-configurable-y-ui)), el cron usa **ese** perfil y las
+> variables `DAILY_*` de abajo se ignoran. `DAILY_*` solo aplica con
+> `SEARCH_PROFILE_JSON=` vacío.
+
 ```dotenv
 ENABLE_SCHEDULER=true
 TIMEZONE=Europe/Madrid
@@ -631,7 +703,19 @@ DAILY_PREFERENCES=
 # Requisitos OBLIGATORIOS (AND), separados por comas. Vacío = sin filtro duro.
 # Ejemplo: piscina,padel
 DAILY_MUST_HAVE=
+# Radio geográfico: CP y radio deben configurarse juntos (vacío = sin radio).
+DAILY_POSTAL_CODE=
+DAILY_RADIUS_KM=
+# Año mínimo de construcción (vacío = sin filtro).
+DAILY_MIN_YEAR_BUILT=
 ```
+
+**Radio y año en el cron:** si defines `DAILY_POSTAL_CODE`, debes indicar también
+`DAILY_RADIUS_KM` (1-50). El CP se resuelve al arrancar la búsqueda con CartoCiudad y los
+actores reciben el radio. `DAILY_MIN_YEAR_BUILT` aplica el mismo criterio que en la API:
+duro si el portal publica el año y reforzado por el LLM cuando no consta. Un CP inválido,
+un radio fuera de rango o configurar solo uno de los dos impide arrancar con
+`CONFIGURATION_ERROR`.
 
 **`DAILY_MUST_HAVE` vs `DAILY_PREFERENCES`:** `DAILY_MUST_HAVE` es un filtro **duro**
 antes del LLM (si el anuncio no menciona el término en título, descripción o comodidades,
@@ -661,7 +745,79 @@ ENABLE_SCHEDULER=false
 El job nunca propaga excepciones: cualquier fallo se registra con `logger.exception` y
 `error_code` para no perder el error.
 
-## 11. Modo sin credenciales (tests)
+## 11. Perfil de búsqueda configurable y UI
+
+El cuerpo de la búsqueda vive en **una sola variable**, `SEARCH_PROFILE_JSON`, y lo usan el
+job diario, la UI y `POST /api/v1/search-profile/run`:
+
+```dotenv
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
+```
+
+| Acción | Cómo |
+|---|---|
+| Ver el perfil activo | `curl http://127.0.0.1:8000/api/v1/search-profile` |
+| Ejecutarlo | `curl -X POST http://127.0.0.1:8000/api/v1/search-profile/run` |
+| Cambiarlo | edita `SEARCH_PROFILE_JSON` y reinicia (en k8s, ConfigMap + `rollout restart`) |
+| Volver a `DAILY_*` | deja `SEARCH_PROFILE_JSON=` vacío |
+
+Formato: el mismo cuerpo que `POST /api/v1/searches`, en **una línea**. Si el JSON es
+inválido o incumple el contrato, el arranque falla con `CONFIGURATION_ERROR` y
+`details.fields` indica el campo.
+
+### La UI
+
+Abre <http://127.0.0.1:8000/>. La página muestra los criterios activos (CP, radio, precio,
+m², habitaciones, año, obligatorios) y un botón **Ejecutar búsqueda** que llama a
+`/api/v1/search-profile/run`.
+
+Cada tarjeta incluye:
+
+- **Foto** del anuncio (seis como máximo; si el portal bloquea el hotlink se muestra
+  «Sin foto»).
+- Precio, €/m², superficie, habitaciones, baños y año de construcción.
+- Ubicación, portal, comodidades detectadas, motivo del LLM y relevancia.
+- Enlace directo a Idealista/Fotocasa.
+
+Puedes ordenar por relevancia, precio, superficie o año sin volver a lanzar la búsqueda.
+La UI no tiene build ni dependencias externas: son tres ficheros estáticos en `app/web/`.
+
+> **Fotos**: se enlazan las URLs del portal (`listing.photos`, máximo 6). No se almacenan
+> binarios ni se reenvían a terceros.
+
+## 12. Despliegue en Kubernetes (ARM64)
+
+```bash
+# 1. Imagen (multi-arch; ARM64 explícito)
+docker buildx build --platform linux/arm64 -t ghcr.io/<org>/house-finder:0.1.0 --push .
+
+# 2. Secret con los tokens (nunca en git)
+kubectl -n house-finder create secret generic house-finder-secrets \
+  --from-literal=APIFY_TOKEN='...' --from-literal=DEEPSEEK_API_KEY='...'
+
+# 3. Manifiestos
+kubectl apply -k deploy/k8s
+kubectl -n house-finder rollout status deploy/house-finder
+
+# 4. UI
+kubectl -n house-finder port-forward svc/house-finder 8000:80
+# http://127.0.0.1:8000/
+```
+
+Qué incluye `deploy/k8s/`:
+
+| Recurso | Detalle |
+|---|---|
+| `Deployment` | `nodeSelector: kubernetes.io/arch: arm64`, `replicas: 1`, `strategy: Recreate`, probes `/health`, usuario no root. |
+| `ConfigMap` | Entorno + `SEARCH_PROFILE_JSON` (cambiar la búsqueda sin rebuild). |
+| `Secret` | `APIFY_TOKEN` y `DEEPSEEK_API_KEY` (plantilla en `secret.example.yaml`). |
+| `PVC` | 1 Gi en `/data` para `RESULTS_DIR=/data/results`. |
+| `Service` | `ClusterIP` puerto 80 → 8000. |
+
+`replicas: 1` es intencionado: APScheduler corre dentro del proceso y dos pods duplicarían
+el job diario. Ver [deploy/k8s/README.md](../deploy/k8s/README.md).
+
+## 13. Modo sin credenciales (tests)
 
 `ENVIRONMENT=test` omite la validación de credenciales, de modo que puedes explorar la API
 sin tokens (las llamadas reales a Apify/DeepSeek fallarán con `502`/`503`):
@@ -701,11 +857,17 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `APIFY_MAX_ITEMS` | `40` | no | 1-200 |
 | `APIFY_TIMEOUT_SECONDS` | `300` | no | 10-900 |
 | `APIFY_MAX_CHARGE_USD` | sin límite | no | tope de gasto por ejecución (USD) |
+| `GEOCODING_BASE_URL` | `https://www.cartociudad.es/geocoder/api/geocoder` | no | geocodificador de CP |
+| `GEOCODING_TIMEOUT_SECONDS` | `10` | no | segundos |
 | `DEEPSEEK_API_KEY` | — | **sí** | |
 | `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | no | |
 | `DEEPSEEK_MODEL` | `deepseek-flash` | no | |
 | `DEEPSEEK_TIMEOUT_SECONDS` | `60` | no | |
 | `RELEVANCE_THRESHOLD` | `0.6` | no | 0.0-1.0 |
 | `RESULTS_DIR` | `data/results` | no | directorio de JSON; vacío = solo memoria |
-| `DAILY_*` | ver sección 10 | no | criterios del cron |
+| `SEARCH_PROFILE_JSON` | cuerpo CP 28031 + 5 km + 2020 | no | perfil único (cron + UI); vacío = `DAILY_*` |
+| `DAILY_*` | ver sección 10 | no | criterios del cron (solo sin perfil) |
 | `DAILY_MUST_HAVE` | vacío | no | requisitos obligatorios del cron (`piscina,padel`) |
+| `DAILY_POSTAL_CODE` | vacío | no | requiere `DAILY_RADIUS_KM` |
+| `DAILY_RADIUS_KM` | vacío | no | 1-50 km |
+| `DAILY_MIN_YEAR_BUILT` | vacío | no | 1800-año actual+1 |

@@ -1,0 +1,14 @@
+[run]
+source = app
+omit =
+    app/tests/*
+branch = true
+
+[report]
+omit =
+    app/tests/*
+show_missing = true
+skip_covered = false
+
+[html]
+directory = htmlcov

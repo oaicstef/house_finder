@@ -87,6 +87,7 @@ def test_test_environment_skips_credential_validation() -> None:
 def test_build_daily_criteria_from_settings() -> None:
     settings = Settings(
         environment="test",
+        search_profile_json="",
         daily_search_portals="idealista, fotocasa",
         daily_max_price_eur=1200.0,
         daily_min_rooms=2,
@@ -101,7 +102,11 @@ def test_build_daily_criteria_from_settings() -> None:
 
 
 def test_build_daily_criteria_rejects_unknown_portal() -> None:
-    settings = Settings(environment="test", daily_search_portals="pisos.com")
+    settings = Settings(
+        environment="test",
+        search_profile_json="",
+        daily_search_portals="pisos.com",
+    )
 
     with pytest.raises(ConfigurationException):
         settings.build_daily_criteria()

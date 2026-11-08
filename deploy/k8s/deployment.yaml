@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: house-finder
+  namespace: house-finder
+  labels:
+    app.kubernetes.io/name: house-finder
+spec:
+  # APScheduler vive dentro del proceso: más de una réplica duplicaría el job diario.
+  replicas: 1
+  strategy:
+    # Recreate evita solapar dos pods (dos schedulers) durante el despliegue.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: house-finder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: house-finder
+      annotations:
+        # Fuerza el rollout al cambiar el perfil o la configuración.
+        checksum/config: "REPLACE_ON_CONFIG_CHANGE"
+    spec:
+      # El pipeline publica en GHCR y fija aquí el tag sha-<commit>; el Secret
+      # ghcr-login-secret lo crea el workflow de release si no existe.
+      imagePullSecrets:
+        - name: ghcr-login-secret
+      # ARM64 (k8s sobre Ampere/Graviton/Raspberry Pi/clusters arm64).
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          # Imagen publicada por .github/workflows/release.yml.
+          image: ghcr.io/oaicstef/house-finder:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: house-finder-config
+            - secretRef:
+                name: house-finder-secrets
+          volumeMounts:
+            - name: results
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 768Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Trivy KSV-0014: la app solo escribe en el volumen /data.
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: house-finder-results

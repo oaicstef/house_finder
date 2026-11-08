@@ -12,6 +12,7 @@ from typing import Protocol, Sequence, runtime_checkable
 from uuid import UUID
 
 from app.domain.models import (
+    Coordinates,
     Listing,
     ListingAssessment,
     SearchCriteria,
@@ -21,6 +22,7 @@ from app.domain.models import (
 __all__ = [
     "ClassifierPort",
     "ListingRepository",
+    "PostalCodeLocatorPort",
     "ScraperPort",
     "ScheduledSearchServiceProtocol",
     "SearchServiceProtocol",
@@ -36,6 +38,19 @@ class ScraperPort(Protocol):
 
         Raises:
             ScraperException: si el proveedor de scraping falla.
+        """
+        ...
+
+
+@runtime_checkable
+class PostalCodeLocatorPort(Protocol):
+    """Resuelve un código postal español en un punto geográfico."""
+
+    async def locate(self, postal_code: str) -> Coordinates | None:
+        """Devuelve ``None`` si el CP no existe.
+
+        Raises:
+            GeoLocationException: si el proveedor de geocodificación falla.
         """
         ...
 

@@ -1,0 +1,73 @@
+name: Test Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Los tests usan fakes de los ports: no llaman a Apify ni a DeepSeek,
+      # así que no necesitan credenciales en CI.
+      - name: Run tests with coverage
+        run: |
+          pytest \
+            --cov \
+            --cov-report=term-missing \
+            --cov-report=html \
+            --cov-report=xml
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "## Cobertura de tests"
+            echo ""
+            echo '```'
+            coverage report
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            htmlcov/
+            coverage.xml
+          if-no-files-found: warn
+          retention-days: 14

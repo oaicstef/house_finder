@@ -9,11 +9,14 @@ gestiona el ciclo de vida de APScheduler. Ejecutar con:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.dependencies import ServiceContainer, build_container
 from app.api.exception_handlers import register_exception_handlers
@@ -28,6 +31,9 @@ __all__ = ["app", "create_app"]
 #: Hora local del disparo diario.
 DAILY_CRON_HOUR = 7
 DAILY_CRON_MINUTE = 0
+
+#: UI estática servida por el propio backend (sin build ni CDN).
+WEB_DIR = Path(__file__).resolve().parent / "web"
 
 logger = get_logger("app.main")
 
@@ -106,7 +112,21 @@ def create_app(container: ServiceContainer | None = None) -> FastAPI:
     register_exception_handlers(application)
     application.include_router(router)
     application.include_router(health_router)
+    _mount_web_ui(application)
     return application
+
+
+def _mount_web_ui(application: FastAPI) -> None:
+    """Sirve la UI estática (``app/web``) y su página índice."""
+    index = WEB_DIR / "index.html"
+    if not index.exists():  # pragma: no cover - defensa ante empaquetados incompletos
+        logger.warning("web_ui_missing", error_code=None, directory=str(WEB_DIR))
+        return
+    application.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+    @application.get("/", include_in_schema=False)
+    async def index_page() -> FileResponse:
+        return FileResponse(index, media_type="text/html; charset=utf-8")
 
 
 app = create_app()

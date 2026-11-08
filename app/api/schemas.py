@@ -7,7 +7,7 @@ entidades (``to_domain``) o desde ellas (``from_domain``).
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -23,6 +23,7 @@ __all__ = [
     "PortalOutcomeResponse",
     "ScheduledRunResponse",
     "SearchCreateRequest",
+    "SearchProfileResponse",
     "SearchResponse",
 ]
 
@@ -60,6 +61,33 @@ class SearchCreateRequest(BaseModel):
         ),
         examples=[["padel", "piscina"]],
     )
+    postal_code: str | None = Field(
+        default=None,
+        pattern=r"^\d{5}$",
+        description=(
+            "Código postal español de 5 dígitos. Se resuelve a coordenadas y exige "
+            "radius_km. No se puede combinar con latitude/longitude."
+        ),
+        examples=["28031"],
+    )
+    radius_km: int | None = Field(
+        default=None,
+        ge=1,
+        le=50,
+        description="Radio en kilómetros alrededor del código postal o de las coordenadas.",
+    )
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    min_year_built: int | None = Field(
+        default=None,
+        ge=1800,
+        le=2100,
+        description=(
+            "Año mínimo de construcción. Se aplica como filtro duro cuando el portal "
+            "publica el año y el clasificador lo exige cuando no consta."
+        ),
+        examples=[2020],
+    )
 
     @field_validator("must_have")
     @classmethod
@@ -87,6 +115,28 @@ class SearchCreateRequest(BaseModel):
             raise ValueError("min_price_eur no puede ser mayor que max_price_eur")
         return self
 
+    @field_validator("min_year_built")
+    @classmethod
+    def _check_year_built(cls, value: int | None) -> int | None:
+        if value is not None and value > date.today().year + 1:
+            raise ValueError("min_year_built no puede ser posterior al año actual")
+        return value
+
+    @model_validator(mode="after")
+    def _check_geo(self) -> Self:
+        has_latitude = self.latitude is not None
+        has_longitude = self.longitude is not None
+        if has_latitude != has_longitude:
+            raise ValueError("latitude y longitude deben enviarse juntas")
+        if self.postal_code is not None and (has_latitude or has_longitude):
+            raise ValueError("usa postal_code o latitude/longitude, no ambos")
+        has_origin = self.postal_code is not None or (has_latitude and has_longitude)
+        if self.radius_km is not None and not has_origin:
+            raise ValueError("radius_km requiere postal_code o latitude/longitude")
+        if has_origin and self.radius_km is None:
+            raise ValueError("radius_km es obligatorio cuando se indica un origen geográfico")
+        return self
+
     def to_domain(self) -> SearchCriteria:
         """Convierte el DTO de transporte en criterios de dominio."""
         unique_portals: list[Portal] = []
@@ -105,6 +155,11 @@ class SearchCreateRequest(BaseModel):
             max_results=self.max_results,
             preferences=self.preferences,
             must_have=tuple(self.must_have),
+            postal_code=self.postal_code,
+            radius_km=self.radius_km,
+            latitude=self.latitude,
+            longitude=self.longitude,
+            min_year_built=self.min_year_built,
         )
 
 
@@ -120,6 +175,8 @@ class ListingResponse(BaseModel):
     rooms: int | None
     bathrooms: int | None
     location: str
+    year_built: int | None
+    photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
     relevance: float
     reason: str
@@ -137,6 +194,8 @@ class ListingResponse(BaseModel):
             rooms=listing.rooms,
             bathrooms=listing.bathrooms,
             location=listing.location,
+            year_built=listing.year_built,
+            photos=list(listing.photos),
             amenities=list(listing.amenities),
             relevance=scored.relevance,
             reason=scored.reason,
@@ -204,6 +263,16 @@ class ScheduledRunResponse(BaseModel):
         description="Motivo por el que no se ejecutó (p. ej. already_executed_today)",
     )
     result: SearchResponse | None = None
+
+
+class SearchProfileResponse(BaseModel):
+    """Perfil de búsqueda activo (el que usa el job diario y la UI)."""
+
+    source: Literal["profile", "legacy"]
+    profile: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Cuerpo equivalente a POST /api/v1/searches para el perfil activo.",
+    )
 
 
 class HealthResponse(BaseModel):

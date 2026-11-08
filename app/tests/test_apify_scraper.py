@@ -361,6 +361,85 @@ async def test_fotocasa_input_uses_its_own_vocabulary() -> None:
     assert "country" not in run_input
 
 
+async def test_idealista_input_snaps_filters_to_allowed_steps() -> None:
+    """Idealista solo admite escalones cerrados: un valor libre da 400 (InvalidRequestError)."""
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client)
+    criteria = SearchCriteria(
+        location="Madrid",
+        portals=(Portal.IDEALISTA,),
+        min_price_eur=980.0,
+        max_price_eur=910000.0,
+        min_size_m2=90.0,
+    )
+
+    await scraper.fetch_listings(criteria)
+
+    run_input = client.calls[0]["run_input"]
+    # Mínimos hacia abajo y máximos hacia arriba: el filtro local aplica el valor exacto.
+    assert run_input["minPrice"] == "950"
+    assert run_input["maxPrice"] == "950000"
+    assert run_input["minSize"] == "80"
+
+
+async def test_idealista_input_always_uses_allowed_steps() -> None:
+    """Cualquier valor del usuario acaba en un escalón que el actor acepta."""
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client)
+    criteria = SearchCriteria(
+        location="Madrid",
+        portals=(Portal.IDEALISTA,),
+        min_price_eur=1234.0,
+        max_price_eur=876543.0,
+        min_size_m2=155.0,
+    )
+
+    await scraper.fetch_listings(criteria)
+
+    run_input = client.calls[0]["run_input"]
+    assert run_input["minPrice"] == "1200"
+    assert run_input["maxPrice"] == "900000"
+    assert run_input["minSize"] == "140"
+
+
+async def test_idealista_input_snaps_out_of_range_values_to_no_limit() -> None:
+    """Fuera del rango del actor, ``0`` (sin límite) y el filtro local descarta el resto."""
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client)
+    criteria = SearchCriteria(
+        location="Madrid",
+        portals=(Portal.IDEALISTA,),
+        max_price_eur=5_000_000.0,
+        min_size_m2=1000.0,
+    )
+
+    await scraper.fetch_listings(criteria)
+
+    run_input = client.calls[0]["run_input"]
+    assert run_input["maxPrice"] == "0"
+    assert run_input["minSize"] == "300"
+
+
+async def test_fotocasa_input_does_not_snap_free_values() -> None:
+    """Fotocasa acepta enteros libres: no se altera lo que pide el usuario."""
+    client = _FakeClient([RAW_ITEM])
+    scraper = build_scraper(client, actor_ids={Portal.FOTOCASA: "actor-fotocasa"}, operation="sale")
+    criteria = SearchCriteria(
+        location="Madrid",
+        portals=(Portal.FOTOCASA,),
+        min_price_eur=1000.0,
+        max_price_eur=876543.0,
+        min_size_m2=90.0,
+    )
+
+    await scraper.fetch_listings(criteria)
+
+    run_input = client.calls[0]["run_input"]
+    assert run_input["minPrice"] == 1000
+    assert run_input["maxPrice"] == 876543
+    assert run_input["minSize"] == 90
+
+
 async def test_raises_scraper_exception_when_run_has_no_dataset() -> None:
     scraper = build_scraper(_FakeClient([RAW_ITEM], run_result=_FakeRun(None)))
 
