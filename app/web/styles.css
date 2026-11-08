@@ -359,6 +359,13 @@ button:disabled {
   font-weight: 600;
 }
 
+.card__amenities li.card__match {
+  color: #7a4f00;
+  border-color: #f0d8a8;
+  background: #fff8e8;
+  font-weight: 600;
+}
+
 .card__amenities li {
   color: var(--good);
   font-size: 0.76rem;

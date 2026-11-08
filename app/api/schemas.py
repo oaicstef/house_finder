@@ -61,6 +61,15 @@ class SearchCreateRequest(BaseModel):
         ),
         examples=[["padel", "piscina"]],
     )
+    preferred_terms: list[str] = Field(
+        default_factory=list,
+        max_length=8,
+        description=(
+            "Términos deseables pero NO excluyentes: los anuncios que los mencionan se "
+            "destacan en 'matched_terms' y se ordenan primero, sin descartar al resto."
+        ),
+        examples=[["padel"]],
+    )
     postal_code: str | None = Field(
         default=None,
         pattern=r"^\d{5}$",
@@ -98,9 +107,9 @@ class SearchCreateRequest(BaseModel):
         examples=["B"],
     )
 
-    @field_validator("must_have")
+    @field_validator("must_have", "preferred_terms")
     @classmethod
-    def _clean_must_have(cls, values: list[str]) -> list[str]:
+    def _clean_terms(cls, values: list[str]) -> list[str]:
         cleaned: list[str] = []
         for value in values:
             term = (value or "").strip()
@@ -172,6 +181,7 @@ class SearchCreateRequest(BaseModel):
             max_results=self.max_results,
             preferences=self.preferences,
             must_have=tuple(self.must_have),
+            preferred_terms=tuple(self.preferred_terms),
             postal_code=self.postal_code,
             radius_km=self.radius_km,
             latitude=self.latitude,
@@ -193,6 +203,7 @@ class SearchCreateRequest(BaseModel):
             max_results=criteria.max_results,
             preferences=criteria.preferences,
             must_have=list(criteria.must_have),
+            preferred_terms=list(criteria.preferred_terms),
             postal_code=criteria.postal_code,
             radius_km=criteria.radius_km,
             latitude=criteria.latitude,
@@ -218,11 +229,19 @@ class ListingResponse(BaseModel):
     energy_rating: str | None
     photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(
+        default_factory=list,
+        description="Términos preferentes presentes en el anuncio (criterio no excluyente).",
+    )
     relevance: float
     reason: str
 
     @classmethod
-    def from_domain(cls, scored: ScoredListing) -> "ListingResponse":
+    def from_domain(
+        cls,
+        scored: ScoredListing,
+        preferred_terms: tuple[str, ...] = (),
+    ) -> "ListingResponse":
         listing = scored.listing
         return cls(
             portal=listing.portal.value,
@@ -238,6 +257,7 @@ class ListingResponse(BaseModel):
             energy_rating=listing.energy_rating,
             photos=list(listing.photos),
             amenities=list(listing.amenities),
+            matched_terms=list(listing.matches_any(preferred_terms)),
             relevance=scored.relevance,
             reason=scored.reason,
         )
@@ -291,7 +311,10 @@ class SearchResponse(BaseModel):
                 for outcome in result.portal_outcomes
             ],
             warnings=list(result.warnings),
-            listings=[ListingResponse.from_domain(item) for item in result.listings],
+            listings=[
+                ListingResponse.from_domain(item, result.criteria.preferred_terms)
+                for item in result.listings
+            ],
         )
 
 

@@ -27,6 +27,7 @@ const FIELD_IDS = {
   energy: "f-energy",
   maxResults: "f-max-results",
   mustHave: "f-must-have",
+  preferred: "f-preferred",
   preferences: "f-preferences",
 };
 
@@ -81,6 +82,7 @@ function renderCriteria(profile) {
     ["Año mín.", profile.min_year_built ?? "—"],
     ["Eficiencia mín.", profile.max_energy_rating ?? "—"],
     ["Obligatorio", (profile.must_have || []).join(", ") || "—"],
+    ["Destacado", (profile.preferred_terms || []).join(", ") || "—"],
     ["Resultados", profile.max_results ?? "—"],
   ];
   for (const [label, value] of entries) {
@@ -103,6 +105,7 @@ function fillForm(profile) {
   value("energy").value = profile.max_energy_rating || "";
   value("maxResults").value = profile.max_results ?? "";
   value("mustHave").value = (profile.must_have || []).join(", ");
+  value("preferred").value = (profile.preferred_terms || []).join(", ");
   value("preferences").value = profile.preferences || "";
 
   const selected = new Set(profile.portals || []);
@@ -152,6 +155,11 @@ function readForm() {
     max_energy_rating: document.getElementById(FIELD_IDS.energy).value || null,
     max_results: readNumber("maxResults") ?? 40,
     must_have: mustHave,
+    preferred_terms: document
+      .getElementById(FIELD_IDS.preferred)
+      .value.split(",")
+      .map((term) => term.trim())
+      .filter(Boolean),
     preferences: preferences || null,
   };
 }
@@ -174,6 +182,7 @@ async function parseError(response) {
 function sortListings(listingList, mode) {
   const sorted = [...listingList];
   const byPrice = (a, b) => a.price_eur - b.price_eur;
+  const byMatches = (a, b) => (b.matched_terms?.length || 0) - (a.matched_terms?.length || 0);
   switch (mode) {
     case "price-asc":
       return sorted.sort(byPrice);
@@ -184,7 +193,9 @@ function sortListings(listingList, mode) {
     case "year-desc":
       return sorted.sort((a, b) => (b.year_built ?? 0) - (a.year_built ?? 0));
     default:
-      return sorted.sort((a, b) => b.relevance - a.relevance || byPrice(a, b));
+      return sorted.sort(
+        (a, b) => byMatches(a, b) || b.relevance - a.relevance || byPrice(a, b),
+      );
   }
 }
 
@@ -236,6 +247,12 @@ function buildCard(listing) {
   }
 
   const amenities = node.querySelector(".card__amenities");
+  for (const term of listing.matched_terms || []) {
+    const item = document.createElement("li");
+    item.className = "card__match";
+    item.textContent = `★ ${term}`;
+    amenities.prepend(item);
+  }
   for (const amenity of listing.amenities || []) {
     const item = document.createElement("li");
     item.textContent = AMENITY_LABEL[amenity] || amenity;

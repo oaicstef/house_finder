@@ -371,7 +371,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
     "min_rooms": 4,
     "max_results": 50,
     "preferences": "Casa o chalet, piscina comunitaria, pádel comunitario",
-    "must_have": ["padel"],
+    "must_have": ["piscina"],
+    "preferred_terms": ["padel"],
     "postal_code": "28031",
     "radius_km": 5,
     "min_year_built": 2020,
@@ -384,6 +385,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   `latitude`, `longitude` y `distanceKm`; `location` se usa solo como etiqueta.
 - **Alternativa sin CP**: `"latitude": 40.378766, "longitude": -3.602295, "radius_km": 5`.
   No se puede combinar `postal_code` con `latitude`/`longitude`.
+- **`preferred_terms`**: deseables pero **no excluyentes** (p. ej. `padel`). Se buscan en
+  título, descripción y comodidades; los anuncios que los mencionan vuelven en
+  `matched_terms` y se ordenan por delante del resto, sin descartar a los demás.
 - **`min_year_built`**: filtro duro cuando el portal publica el año (`year_built` en la
   respuesta). Si no consta, el LLM exige que la descripción lo confirme; los anuncios sin
   año pueden quedar fuera.
@@ -723,6 +727,8 @@ DAILY_PREFERENCES=
 # Requisitos OBLIGATORIOS (AND), separados por comas. Vacío = sin filtro duro.
 # Ejemplo: piscina,padel
 DAILY_MUST_HAVE=
+# Términos deseables (no excluyentes), separados por comas: se destacan y van primero.
+DAILY_PREFERRED_TERMS=
 # Radio geográfico: CP y radio deben configurarse juntos (vacío = sin radio).
 DAILY_POSTAL_CODE=
 DAILY_RADIUS_KM=
@@ -773,7 +779,7 @@ El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El v
 fábrica vive en **una sola variable**, `SEARCH_PROFILE_JSON`:
 
 ```dotenv
-SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020,"max_energy_rating":"B"}
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["piscina"],"preferred_terms":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020,"max_energy_rating":"B"}
 ```
 
 | Acción | Cómo |
@@ -913,6 +919,7 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `SEARCH_PROFILE_JSON` | cuerpo CP 28031 + 5 km + 2020 | no | perfil único (cron + UI); vacío = `DAILY_*` |
 | `DAILY_*` | ver sección 10 | no | criterios del cron (solo sin perfil) |
 | `DAILY_MUST_HAVE` | vacío | no | requisitos obligatorios del cron (`piscina,padel`) |
+| `DAILY_PREFERRED_TERMS` | vacío | no | deseables no excluyentes; se destacan primero |
 | `DAILY_POSTAL_CODE` | vacío | no | requiere `DAILY_RADIUS_KM` |
 | `DAILY_RADIUS_KM` | vacío | no | 1-50 km |
 | `DAILY_MIN_YEAR_BUILT` | vacío | no | 1800-año actual+1 |

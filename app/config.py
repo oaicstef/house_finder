@@ -38,6 +38,7 @@ DEFAULT_SEARCH_PROFILE: dict[str, Any] = {
     "max_results": 50,
     "preferences": "Casa o chalet, padel cominitario, piscina comunitaria",
     "must_have": ["padel"],
+    "preferred_terms": [],
     "postal_code": "28031",
     "radius_km": 5,
     "min_year_built": 2020,
@@ -97,6 +98,8 @@ class Settings(BaseSettings):
     daily_preferences: str | None = None
     #: Requisitos obligatorios del cron, separados por comas (vacío = sin filtro duro).
     daily_must_have: str | None = None
+    #: Términos deseables del cron, separados por comas (no excluyentes).
+    daily_preferred_terms: str | None = None
     #: Radio geográfico del cron (CP y radio deben configurarse juntos).
     daily_postal_code: str | None = None
     daily_radius_km: int | None = Field(default=None, ge=1, le=50)
@@ -119,6 +122,7 @@ class Settings(BaseSettings):
         "daily_min_rooms",
         "daily_preferences",
         "daily_must_have",
+        "daily_preferred_terms",
         "daily_postal_code",
         "daily_radius_km",
         "daily_min_year_built",
@@ -293,11 +297,16 @@ class Settings(BaseSettings):
             max_results=self.daily_max_results,
             preferences=preferences,
             must_have=self._parse_daily_must_have(),
+            preferred_terms=self._parse_daily_preferred_terms(),
             postal_code=postal_code,
             radius_km=radius_km,
             min_year_built=self.daily_min_year_built,
             max_energy_rating=self.daily_max_energy_rating,
         )
+
+    def _parse_daily_preferred_terms(self) -> tuple[str, ...]:
+        """Convierte ``DAILY_PREFERRED_TERMS`` (coma) en términos no excluyentes."""
+        return self._parse_daily_terms(self.daily_preferred_terms, "DAILY_PREFERRED_TERMS")
 
     def _parse_daily_must_have(self) -> tuple[str, ...]:
         """Convierte ``DAILY_MUST_HAVE`` (lista separada por comas) en requisitos.
@@ -306,15 +315,20 @@ class Settings(BaseSettings):
             ConfigurationException: si algún término no cumple el contrato de longitud
                 (2-40 caracteres) que también aplica la API.
         """
+        return self._parse_daily_terms(self.daily_must_have, "DAILY_MUST_HAVE")
+
+    @staticmethod
+    def _parse_daily_terms(raw: str | None, variable: str) -> tuple[str, ...]:
+        """Lista separada por comas; valida longitud y deduplica sin distinguir caja."""
         terms: list[str] = []
         seen: set[str] = set()
-        for raw_term in (self.daily_must_have or "").split(","):
+        for raw_term in (raw or "").split(","):
             term = raw_term.strip()
             if not term:
                 continue
             if not 2 <= len(term) <= 40:
                 raise ConfigurationException(
-                    "DAILY_MUST_HAVE contiene un requisito con longitud inválida "
+                    f"{variable} contiene un término con longitud inválida "
                     f"(2-40 caracteres): {term!r}",
                     details={"invalid_requirement": term},
                 )

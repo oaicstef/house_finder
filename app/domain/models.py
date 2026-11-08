@@ -154,6 +154,11 @@ class Listing:
         haystack = self.searchable_text
         return all(normalize_text(term) in haystack for term in terms)
 
+    def matches_any(self, terms: Sequence[str]) -> tuple[str, ...]:
+        """Términos preferentes presentes en el anuncio (ninguno = tupla vacía)."""
+        haystack = self.searchable_text
+        return tuple(term for term in terms if normalize_text(term) in haystack)
+
 
 @dataclass(frozen=True, slots=True)
 class SearchCriteria:
@@ -170,6 +175,9 @@ class SearchCriteria:
     #: Requisitos obligatorios (p. ej. ``("padel", "piscina")``). Se comprueban
     #: contra título, descripción y amenities; si falta alguno, se descarta.
     must_have: tuple[str, ...] = ()
+    #: Términos deseables pero NO excluyentes: los anuncios que los mencionan se
+    #: destacan y se ordenan primero, sin descartar al resto.
+    preferred_terms: tuple[str, ...] = ()
     #: Origen geográfico: código postal (se resuelve a coordenadas) o lat/lon.
     postal_code: str | None = None
     radius_km: int | None = None
@@ -192,6 +200,7 @@ class SearchCriteria:
             "max_results": self.max_results,
             "preferences": (self.preferences or "").strip().lower() or None,
             "must_have": sorted(normalize_text(term) for term in self.must_have),
+            "preferred_terms": sorted(normalize_text(term) for term in self.preferred_terms),
             "postal_code": (self.postal_code or "").strip() or None,
             "radius_km": self.radius_km,
             "latitude": self.latitude,

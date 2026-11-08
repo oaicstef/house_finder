@@ -20,7 +20,7 @@
           <label class="sort">
             Ordenar
             <select id="sort-select">
-              <option value="relevance">Relevancia</option>
+              <option value="relevance">Relevancia (destacados primero)</option>
               <option value="price-asc">Precio: menor a mayor</option>
               <option value="price-desc">Precio: mayor a menor</option>
               <option value="size-desc">Superficie: mayor a menor</option>
@@ -91,6 +91,10 @@
           <label class="field field--wide">
             Requisitos obligatorios (separados por comas)
             <input id="f-must-have" name="must_have" type="text" placeholder="padel, piscina" />
+          </label>
+          <label class="field field--wide">
+            Destacar sin excluir (separado por comas)
+            <input id="f-preferred" name="preferred_terms" type="text" placeholder="padel" />
           </label>
           <label class="field field--wide">
             Preferencias

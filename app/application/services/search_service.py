@@ -282,8 +282,13 @@ class SearchService:
                 )
             )
 
-        # Mayor relevancia primero; a igualdad, el anuncio más barato.
-        scored.sort(key=lambda item: (-item.relevance, item.listing.price_eur))
+        # Primero los que cumplen algún término preferente (no excluyente),
+        # después por relevancia y, a igualdad, por precio.
+        def rank(item: ScoredListing) -> tuple[int, float, float]:
+            highlighted = 1 if item.listing.matches_any(criteria.preferred_terms) else 0
+            return (-highlighted, -item.relevance, item.listing.price_eur)
+
+        scored.sort(key=rank)
         limited = scored[: criteria.max_results]
 
         self._logger.info(
@@ -293,6 +298,16 @@ class SearchService:
             matched_count=len(limited),
             duration_ms=self._elapsed_ms(started),
         )
+        if criteria.preferred_terms:
+            self._logger.info(
+                "listings_ranked_by_preferences",
+                search_id=str(search_id),
+                preferred_terms=list(criteria.preferred_terms),
+                highlighted_count=sum(
+                    1 for item in limited if item.listing.matches_any(criteria.preferred_terms)
+                ),
+                matched_count=len(limited),
+            )
         return limited
 
     @staticmethod
