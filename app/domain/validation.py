@@ -10,7 +10,7 @@ import re
 from datetime import date
 
 from app.domain.exceptions import ValidationError
-from app.domain.models import SearchCriteria
+from app.domain.models import ENERGY_RATING_SCALE, SearchCriteria
 
 __all__ = ["validate_criteria"]
 
@@ -109,5 +109,14 @@ def validate_criteria(criteria: SearchCriteria) -> None:
                     "min_year_built": criteria.min_year_built,
                     "min": 1800,
                     "max": current_year + 1,
+                },
+            )
+    if criteria.max_energy_rating is not None:
+        if criteria.max_energy_rating not in ENERGY_RATING_SCALE:
+            raise ValidationError(
+                "max_energy_rating debe ser una letra entre A y G",
+                details={
+                    "max_energy_rating": criteria.max_energy_rating,
+                    "allowed": list(ENERGY_RATING_SCALE),
                 },
             )

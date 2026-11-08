@@ -374,7 +374,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
     "must_have": ["padel"],
     "postal_code": "28031",
     "radius_km": 5,
-    "min_year_built": 2020
+    "min_year_built": 2020,
+    "max_energy_rating": "B"
   }'
 ```
 
@@ -386,7 +387,14 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
 - **`min_year_built`**: filtro duro cuando el portal publica el año (`year_built` en la
   respuesta). Si no consta, el LLM exige que la descripción lo confirme; los anuncios sin
   año pueden quedar fuera.
-- **Límites**: `radius_km` entre 1 y 50, CP de 5 dígitos y año entre 1800 y el actual + 1.
+- **`max_energy_rating`**: certificado energético mínimo, de `A` (mejor) a `G` (peor);
+  `"B"` acepta A o B. Es un filtro duro cuando el portal publica la etiqueta
+  (`energy_rating` en la respuesta). Para leerla, el scraper activa `fetchDetails` en
+  Idealista, que añade una petición por inmueble y hace la ejecución bastante más lenta;
+  sube `APIFY_TIMEOUT_SECONDS` o baja `APIFY_MAX_ITEMS` si usas este filtro. Si la
+  etiqueta no consta, el LLM la busca en la descripción y no la da por cumplida.
+- **Límites**: `radius_km` entre 1 y 50, CP de 5 dígitos, año entre 1800 y el actual + 1
+  y etiqueta energética entre A y G.
 - **Precio y superficie**: en Idealista se ajustan solos a sus escalones (p. ej. 90 m² →
   80 m²); el filtro duro mantiene el valor exacto que pediste.
 - **Radio aproximado**: se mide desde el centroide del CP; el área real del código postal
@@ -718,6 +726,8 @@ DAILY_POSTAL_CODE=
 DAILY_RADIUS_KM=
 # Año mínimo de construcción (vacío = sin filtro).
 DAILY_MIN_YEAR_BUILT=
+# Certificado energético mínimo: A (mejor) - G (peor); "B" = B o mejor.
+DAILY_MAX_ENERGY_RATING=
 ```
 
 **Radio y año en el cron:** si defines `DAILY_POSTAL_CODE`, debes indicar también
@@ -761,7 +771,7 @@ El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El v
 fábrica vive en **una sola variable**, `SEARCH_PROFILE_JSON`:
 
 ```dotenv
-SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020,"max_energy_rating":"B"}
 ```
 
 | Acción | Cómo |
@@ -904,3 +914,4 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `DAILY_POSTAL_CODE` | vacío | no | requiere `DAILY_RADIUS_KM` |
 | `DAILY_RADIUS_KM` | vacío | no | 1-50 km |
 | `DAILY_MIN_YEAR_BUILT` | vacío | no | 1800-año actual+1 |
+| `DAILY_MAX_ENERGY_RATING` | vacío | no | A-G (`B` = B o mejor) |

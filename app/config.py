@@ -41,6 +41,7 @@ DEFAULT_SEARCH_PROFILE: dict[str, Any] = {
     "postal_code": "28031",
     "radius_km": 5,
     "min_year_built": 2020,
+    "max_energy_rating": None,
 }
 
 DEFAULT_SEARCH_PROFILE_JSON = json.dumps(DEFAULT_SEARCH_PROFILE, ensure_ascii=False)
@@ -100,6 +101,8 @@ class Settings(BaseSettings):
     daily_postal_code: str | None = None
     daily_radius_km: int | None = Field(default=None, ge=1, le=50)
     daily_min_year_built: int | None = Field(default=None, ge=1800, le=2100)
+    #: Certificado energético mínimo del cron ("B" = B o mejor; vacío = sin filtro).
+    daily_max_energy_rating: str | None = Field(default=None, pattern=r"^[A-Ga-g]$")
 
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
@@ -119,6 +122,7 @@ class Settings(BaseSettings):
         "daily_postal_code",
         "daily_radius_km",
         "daily_min_year_built",
+        "daily_max_energy_rating",
         "search_profile_json",
         "search_profile_file",
         mode="before",
@@ -129,6 +133,11 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("daily_max_energy_rating", mode="after")
+    @classmethod
+    def _upper_energy_rating(cls, value: str | None) -> str | None:
+        return value.upper() if value else value
 
     @field_validator("geocoding_base_url")
     @classmethod
@@ -287,6 +296,7 @@ class Settings(BaseSettings):
             postal_code=postal_code,
             radius_km=radius_km,
             min_year_built=self.daily_min_year_built,
+            max_energy_rating=self.daily_max_energy_rating,
         )
 
     def _parse_daily_must_have(self) -> tuple[str, ...]:

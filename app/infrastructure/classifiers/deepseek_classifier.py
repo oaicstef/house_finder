@@ -36,6 +36,10 @@ _SYSTEM_PROMPT = (
     "- Si 'criteria.min_year_built' está presente, es un requisito DURO: cuando el año de "
     "construcción consta y es anterior, la relevancia no debe superar 0.3; cuando no consta, "
     "no asumas que cumple el requisito ni lo puntúes como si lo cumpliera.\n"
+    "- Si 'criteria.max_energy_rating' está presente, es un requisito DURO: la escala es "
+    "A (mejor) a G (peor) y el valor indica el mínimo aceptado ('B' = A o B). Cuando "
+    "'energy_rating' consta y es peor, la relevancia no debe superar 0.3; cuando no consta, "
+    "búscalo en la descripción ('certificado energético B') y no lo des por cumplido si no aparece.\n"
     "- El radio geográfico ya se ha aplicado antes de esta llamada: no descartes un anuncio "
     "por no poder verificar tú la distancia.\n"
     "- 'relevance' es una puntuación gradual, NO un sí/no. Guíate por esta escala: "
@@ -96,6 +100,7 @@ class DeepSeekListingClassifier:
                 "postal_code": criteria.postal_code,
                 "radius_km": criteria.radius_km,
                 "min_year_built": criteria.min_year_built,
+                "max_energy_rating": criteria.max_energy_rating,
             },
             "listings": [
                 {
@@ -108,6 +113,7 @@ class DeepSeekListingClassifier:
                     "bathrooms": listing.bathrooms,
                     "location": listing.location,
                     "year_built": listing.year_built,
+                    "energy_rating": listing.energy_rating,
                     "price_per_m2": listing.price_per_m2,
                     "amenities": list(listing.amenities),
                     "verified_requirements": [

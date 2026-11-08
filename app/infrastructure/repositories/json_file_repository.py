@@ -122,16 +122,22 @@ class JsonFileListingRepository:
         return await self.get_by_id(search_id)
 
     async def list_recent(self, limit: int = 20) -> list[SearchResult]:
-        """Búsquedas guardadas, de la más reciente a la más antigua."""
+        """Búsquedas guardadas, de la más reciente a la más antigua.
+
+        Se ordena por ``created_at`` y no por ``mtime``: dos escrituras seguidas
+        pueden compartir la misma marca de tiempo del sistema de ficheros y dejar
+        el orden indefinido.
+        """
         async with self._lock:
             paths = list(self._index.values())
         results: list[SearchResult] = []
-        for path in sorted(paths, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]:
+        for path in paths:
             try:
                 results.append(await self._read(path, UUID(path.stem)))
             except RepositoryException:
                 continue
-        return results
+        results.sort(key=lambda result: result.created_at, reverse=True)
+        return results[:limit]
 
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente en disco; tolera ficheros corruptos intermedios."""
@@ -191,6 +197,7 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
             "latitude": criteria.latitude,
             "longitude": criteria.longitude,
             "min_year_built": criteria.min_year_built,
+            "max_energy_rating": criteria.max_energy_rating,
         },
         "listings": [
             {
@@ -203,6 +210,7 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
                 "bathrooms": scored.listing.bathrooms,
                 "location": scored.listing.location,
                 "year_built": scored.listing.year_built,
+                "energy_rating": scored.listing.energy_rating,
                 "photos": list(scored.listing.photos),
                 "description": scored.listing.description,
                 "amenities": list(scored.listing.amenities),
@@ -232,6 +240,7 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
         latitude=criteria_payload.get("latitude"),
         longitude=criteria_payload.get("longitude"),
         min_year_built=criteria_payload.get("min_year_built"),
+        max_energy_rating=criteria_payload.get("max_energy_rating"),
     )
     listings = tuple(
         ScoredListing(
@@ -247,6 +256,7 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
                 description=item.get("description"),
                 amenities=tuple(item.get("amenities") or ()),
                 year_built=item.get("year_built"),
+                energy_rating=item.get("energy_rating"),
                 photos=tuple(item.get("photos") or ()),
             ),
             relevance=float(item["relevance"]),

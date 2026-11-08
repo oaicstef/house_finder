@@ -111,7 +111,7 @@ El perfil se define una sola vez y lo comparten el job diario, la UI y
 `POST /api/v1/search-profile/run`:
 
 ```dotenv
-SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
+SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020,"max_energy_rating":"B"}
 ```
 
 - **Editable desde la UI**: el formulario «Editar criterios» guarda el perfil y pasa a ser
@@ -202,6 +202,7 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 | `DAILY_POSTAL_CODE` | vacío | CP del job diario; requiere `DAILY_RADIUS_KM`. |
 | `DAILY_RADIUS_KM` | vacío | Radio (1-50 km) alrededor del CP del job diario. |
 | `DAILY_MIN_YEAR_BUILT` | vacío | Año mínimo de construcción del job diario. |
+| `DAILY_MAX_ENERGY_RATING` | vacío | Certificado energético mínimo (`A` mejor - `G` peor; `B` = B o mejor). |
 | `RELEVANCE_THRESHOLD` | `0.6` | Umbral mínimo de relevancia para aceptar un anuncio. |
 | `RESULTS_DIR` | `data/results` | Directorio de resultados JSON (vacío = solo memoria). |
 
@@ -238,8 +239,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
 - La respuesta incluye `portals` (`[{"portal": "idealista", "matched": 0}]`) y `warnings`:
   si un portal se queda a cero, lo verás ahí en lugar de recibir resultados parciales
   silenciosos.
-- `postal_code` + `radius_km` busca en un radio alrededor del CP (CartoCiudad) y
-  `min_year_built` exige un año de construcción mínimo.
+- `postal_code` + `radius_km` busca en un radio alrededor del CP (CartoCiudad),
+  `min_year_built` exige un año de construcción mínimo y `max_energy_rating` exige un
+  certificado energético mínimo (`"B"` = A o B).
 
 Errores uniformes:
 

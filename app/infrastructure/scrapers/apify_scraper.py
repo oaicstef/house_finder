@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 from app.domain.exceptions import ScraperException
 from app.domain.models import (
     AMENITY_LABELS,
+    ENERGY_RATING_SCALE,
     Coordinates,
     Listing,
     Portal,
@@ -63,6 +64,21 @@ _YEAR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+#: Claves donde Idealista/Fotocasa pueden publicar el certificado energético.
+_ENERGY_KEYS: tuple[str, ...] = (
+    "energyCertification",
+    "energyCertificate",
+    "certificadoEnergetico",
+    "certificado_energetico",
+    "energyRating",
+    "energyClass",
+    "energyLabel",
+    "energyEfficiency",
+)
+
+#: "B", "b", "Clase B", "B - 45 kWh/m²"... pero nunca la C de "certificate".
+_ENERGY_RATING_PATTERN = re.compile(r"^\s*(?:clase\s*)?([A-G])\b", re.IGNORECASE)
+
 #: Comodidades que aportan los actores -> nombre canónico en el dominio.
 _AMENITY_FLAGS: dict[str, str] = {
     "hasSwimmingPool": "swimming_pool",
@@ -98,6 +114,8 @@ class _PortalProfile:
     location_builder: Callable[[Mapping[str, Any]], str | None] | None = None
     #: Adapta la ubicación al formato que entiende el actor.
     location_transform: Callable[[str], str] | None = None
+    #: El actor admite ``fetchDetails`` (necesario para leer el certificado energético).
+    supports_fetch_details: bool = False
 
 
 #: Escalones del esquema de ``igolaizola/idealista-scraper`` (precio en euros).
@@ -198,6 +216,7 @@ _PROFILES: dict[Portal, _PortalProfile] = {
         price_steps=_IDEALISTA_PRICE_STEPS,
         size_steps=_IDEALISTA_SIZE_STEPS,
         location_transform=_idealista_location,
+        supports_fetch_details=True,
     ),
     Portal.FOTOCASA: _PortalProfile(
         # Verificado en vivo contra igolaizola/fotocasa-scraper (build zQ6P2E7A5hwEubfcJ).
@@ -211,6 +230,33 @@ _PROFILES: dict[Portal, _PortalProfile] = {
 }
 
 _NUMBER_TOKEN = re.compile(r"-?\d[\d.,]*")
+
+
+def _energy_rating_from_value(value: Any) -> str | None:
+    """Letra A-G de una etiqueta energética, o ``None`` si el valor no la contiene."""
+    if isinstance(value, str):
+        match = _ENERGY_RATING_PATTERN.match(value)
+        return match.group(1).upper() if match else None
+    if isinstance(value, Mapping):
+        for key in ("rating", "energyLevel", "energyConsumption", "level", "value", "label"):
+            rating = _energy_rating_from_value(value.get(key))
+            if rating:
+                return rating
+    return None
+
+
+def _energy_rating(item: Mapping[str, Any]) -> str | None:
+    """Busca el certificado en el item y, si existe, en ``_details`` (Idealista)."""
+    sources: list[Mapping[str, Any]] = [item]
+    details = item.get("_details")
+    if isinstance(details, Mapping):
+        sources.append(details)
+    for source in sources:
+        for key in _ENERGY_KEYS:
+            rating = _energy_rating_from_value(source.get(key))
+            if rating:
+                return rating
+    return None
 
 
 def _first_value(item: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
@@ -531,6 +577,8 @@ class ApifyListingScraper:
             radius_unknown = 0
             year_dropped = 0
             year_unknown = 0
+            energy_dropped = 0
+            energy_unknown = 0
             radius_km = criteria.radius_km
             geo_enabled = (
                 radius_km is not None
@@ -557,6 +605,20 @@ class ApifyListingScraper:
                         year_dropped += 1
                         continue
 
+                if criteria.max_energy_rating is not None:
+                    if listing.energy_rating is None:
+                        energy_unknown += 1
+                        self._logger.debug(
+                            "listing_energy_unknown",
+                            portal=portal.value,
+                            listing_url=listing.url,
+                        )
+                    elif ENERGY_RATING_SCALE.index(
+                        listing.energy_rating
+                    ) > ENERGY_RATING_SCALE.index(criteria.max_energy_rating):
+                        energy_dropped += 1
+                        continue
+
                 if not self._matches_hard_criteria(listing, criteria):
                     continue
                 seen_urls.add(listing.url)
@@ -580,6 +642,15 @@ class ApifyListingScraper:
                     kept_count=portal_kept,
                     dropped_count=year_dropped,
                     unknown_year_count=year_unknown,
+                )
+            if criteria.max_energy_rating is not None:
+                self._logger.info(
+                    "listings_filtered_by_energy",
+                    portal=portal.value,
+                    max_energy_rating=criteria.max_energy_rating,
+                    kept_count=portal_kept,
+                    dropped_count=energy_dropped,
+                    unknown_rating_count=energy_unknown,
                 )
 
         if skipped and len(skipped) == len(criteria.portals):
@@ -716,6 +787,15 @@ class ApifyListingScraper:
                 round_up=False,
             )
             run_input["minSize"] = _as_int_string(min_size) if profile.price_as_string else int(min_size)
+        if criteria.max_energy_rating is not None and profile.supports_fetch_details:
+            # Solo el detalle de Idealista publica el certificado; cuesta 1 request
+            # extra por inmueble, así que se activa únicamente cuando hace falta.
+            run_input["fetchDetails"] = True
+            self._logger.debug(
+                "scraper_fetch_details_enabled",
+                portal=portal.value,
+                reason="max_energy_rating",
+            )
         return run_input
 
     def _snapped(
@@ -823,6 +903,7 @@ class ApifyListingScraper:
             description=str(description).strip() if description else None,
             amenities=tuple(dict.fromkeys(amenities)),
             year_built=_year_built(item),
+            energy_rating=_energy_rating(item),
             latitude=latitude,
             longitude=longitude,
             photos=photos,

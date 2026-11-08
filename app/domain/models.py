@@ -18,6 +18,7 @@ from uuid import UUID
 
 __all__ = [
     "AMENITY_LABELS",
+    "ENERGY_RATING_SCALE",
     "Coordinates",
     "Listing",
     "ListingAssessment",
@@ -66,6 +67,9 @@ AMENITY_LABELS: dict[str, tuple[str, ...]] = {
     "lift": ("ascensor", "elevador"),
     "storage_room": ("trastero", "trasteros"),
 }
+
+#: Escala de certificado energético, de mejor (A) a peor (G).
+ENERGY_RATING_SCALE: tuple[str, ...] = ("A", "B", "C", "D", "E", "F", "G")
 
 _ACCENTS = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
 
@@ -119,6 +123,8 @@ class Listing:
     amenities: tuple[str, ...] = ()
     #: Año de construcción publicado por el portal (``None`` si no consta).
     year_built: int | None = None
+    #: Certificado energético (``"A"``-``"G"``), ``None`` si el portal no lo publica.
+    energy_rating: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     #: URLs ``https`` de fotos del portal (máximo 6, deduplicadas).
@@ -171,6 +177,8 @@ class SearchCriteria:
     longitude: float | None = None
     #: Año mínimo de construcción exigido (filtro duro si el portal lo publica).
     min_year_built: int | None = None
+    #: Certificado energético mínimo (``"B"`` = B o mejor; ``None`` = indiferente).
+    max_energy_rating: str | None = None
 
     def fingerprint(self) -> str:
         """Huella estable (sha256) para la idempotencia del job diario."""
@@ -189,6 +197,7 @@ class SearchCriteria:
             "latitude": self.latitude,
             "longitude": self.longitude,
             "min_year_built": self.min_year_built,
+            "max_energy_rating": (self.max_energy_rating or "").strip().upper() or None,
         }
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

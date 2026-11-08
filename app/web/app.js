@@ -24,6 +24,7 @@ const FIELD_IDS = {
   minSize: "f-min-size",
   minRooms: "f-min-rooms",
   minYear: "f-min-year",
+  energy: "f-energy",
   maxResults: "f-max-results",
   mustHave: "f-must-have",
   preferences: "f-preferences",
@@ -78,6 +79,7 @@ function renderCriteria(profile) {
     ["Superficie mín.", number(profile.min_size_m2, " m²")],
     ["Habitaciones mín.", profile.min_rooms ?? "—"],
     ["Año mín.", profile.min_year_built ?? "—"],
+    ["Eficiencia mín.", profile.max_energy_rating ?? "—"],
     ["Obligatorio", (profile.must_have || []).join(", ") || "—"],
     ["Resultados", profile.max_results ?? "—"],
   ];
@@ -98,6 +100,7 @@ function fillForm(profile) {
   value("minSize").value = profile.min_size_m2 ?? "";
   value("minRooms").value = profile.min_rooms ?? "";
   value("minYear").value = profile.min_year_built ?? "";
+  value("energy").value = profile.max_energy_rating || "";
   value("maxResults").value = profile.max_results ?? "";
   value("mustHave").value = (profile.must_have || []).join(", ");
   value("preferences").value = profile.preferences || "";
@@ -146,6 +149,7 @@ function readForm() {
     min_size_m2: readNumber("minSize"),
     min_rooms: readNumber("minRooms"),
     min_year_built: readNumber("minYear"),
+    max_energy_rating: document.getElementById(FIELD_IDS.energy).value || null,
     max_results: readNumber("maxResults") ?? 40,
     must_have: mustHave,
     preferences: preferences || null,

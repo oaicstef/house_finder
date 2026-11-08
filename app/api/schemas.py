@@ -88,6 +88,15 @@ class SearchCreateRequest(BaseModel):
         ),
         examples=[2020],
     )
+    max_energy_rating: Literal["A", "B", "C", "D", "E", "F", "G"] | None = Field(
+        default=None,
+        description=(
+            "Calificación energética mínima, de A (mejor) a G (peor). 'B' acepta A o B. "
+            "Se aplica como filtro duro cuando el portal publica la etiqueta y el "
+            "clasificador la exige cuando no consta."
+        ),
+        examples=["B"],
+    )
 
     @field_validator("must_have")
     @classmethod
@@ -114,6 +123,14 @@ class SearchCreateRequest(BaseModel):
         ):
             raise ValueError("min_price_eur no puede ser mayor que max_price_eur")
         return self
+
+    @field_validator("max_energy_rating", mode="before")
+    @classmethod
+    def _normalize_energy_rating(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            cleaned = value.strip().upper()
+            return cleaned or None
+        return value
 
     @field_validator("min_year_built")
     @classmethod
@@ -160,6 +177,7 @@ class SearchCreateRequest(BaseModel):
             latitude=self.latitude,
             longitude=self.longitude,
             min_year_built=self.min_year_built,
+            max_energy_rating=self.max_energy_rating,
         )
 
     @classmethod
@@ -180,6 +198,7 @@ class SearchCreateRequest(BaseModel):
             latitude=criteria.latitude,
             longitude=criteria.longitude,
             min_year_built=criteria.min_year_built,
+            max_energy_rating=criteria.max_energy_rating,
         )
 
 
@@ -196,6 +215,7 @@ class ListingResponse(BaseModel):
     bathrooms: int | None
     location: str
     year_built: int | None
+    energy_rating: str | None
     photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
     relevance: float
@@ -215,6 +235,7 @@ class ListingResponse(BaseModel):
             bathrooms=listing.bathrooms,
             location=listing.location,
             year_built=listing.year_built,
+            energy_rating=listing.energy_rating,
             photos=list(listing.photos),
             amenities=list(listing.amenities),
             relevance=scored.relevance,

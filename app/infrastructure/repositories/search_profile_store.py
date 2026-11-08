@@ -39,6 +39,7 @@ def _criteria_to_payload(criteria: SearchCriteria) -> dict[str, Any]:
         "latitude": criteria.latitude,
         "longitude": criteria.longitude,
         "min_year_built": criteria.min_year_built,
+        "max_energy_rating": criteria.max_energy_rating,
     }
 
 
@@ -75,6 +76,7 @@ def _payload_to_criteria(payload: Mapping[str, Any]) -> SearchCriteria:
         latitude=payload.get("latitude"),
         longitude=payload.get("longitude"),
         min_year_built=payload.get("min_year_built"),
+        max_energy_rating=payload.get("max_energy_rating"),
     )
 
 
