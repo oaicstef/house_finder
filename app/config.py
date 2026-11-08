@@ -10,6 +10,7 @@ import json
 import re
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -103,6 +104,8 @@ class Settings(BaseSettings):
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
     results_dir: str = "data/results"
+    #: Fichero del perfil editable desde la UI (vacío = junto a ``results_dir``).
+    search_profile_file: str | None = None
     #: Perfil de búsqueda compartido (job diario + UI + ejecución bajo demanda).
     search_profile_json: str | None = DEFAULT_SEARCH_PROFILE_JSON
 
@@ -117,6 +120,7 @@ class Settings(BaseSettings):
         "daily_radius_km",
         "daily_min_year_built",
         "search_profile_json",
+        "search_profile_file",
         mode="before",
     )
     @classmethod
@@ -156,6 +160,21 @@ class Settings(BaseSettings):
     def json_logs(self) -> bool:
         """JSON en producción, consola legible en el resto de entornos."""
         return self.environment == "production"
+
+    @property
+    def resolved_search_profile_file(self) -> str | None:
+        """Ruta del perfil editable; por defecto, junto al directorio de resultados.
+
+        Con ``RESULTS_DIR=/data/results`` (PVC de Kubernetes) el perfil queda en
+        ``/data/search-profile.json``, dentro del mismo volumen persistente.
+        """
+        explicit = (self.search_profile_file or "").strip()
+        if explicit:
+            return explicit
+        results_dir = (self.results_dir or "").strip()
+        if not results_dir:
+            return None
+        return str(Path(results_dir).parent / "search-profile.json")
 
     def build_search_profile(self) -> dict[str, Any] | None:
         """Perfil de búsqueda configurado (``None`` si se usa la ruta ``DAILY_*``).

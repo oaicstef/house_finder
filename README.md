@@ -22,7 +22,8 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 | [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
 | [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
 | [specs/github-deployment-pipeline/plan.md](specs/github-deployment-pipeline/plan.md) | Diseño del pipeline de CI/CD en GitHub Actions. |
-| [deploy/k8s/README.md](deploy/k8s/README.md) | Destino del pipeline: build ARM, Secret, `kubectl apply -k`, CI/CD y port-forward. |
+| [specs/ui-editable-criteria/plan.md](specs/ui-editable-criteria/plan.md) | Criterios editables desde la UI y última búsqueda siempre visible. |
+| [deploy/k8s/README.md](deploy/k8s/README.md) | Destino del pipeline: build ARM, Secret, `kubectl apply -k`, Ingress HTTPS, CI/CD y port-forward. |
 | [deploy/n100/README.md](deploy/n100/README.md) | Alternativa: Docker Compose en el N100 (SSH, volumen y operación). |
 | `/docs` y `/redoc` (en ejecución) | OpenAPI interactivo autogenerado. |
 
@@ -96,7 +97,8 @@ cp .env.example .env            # rellena APIFY_TOKEN y DEEPSEEK_API_KEY
 uvicorn app.main:app --reload
 ```
 
-- **UI con fotos**: <http://127.0.0.1:8000/> (botón «Ejecutar búsqueda»)
+- **UI con fotos**: <http://127.0.0.1:8000/> (criterios editables, última búsqueda
+  guardada y botón «Ejecutar búsqueda»)
 - Documentación interactiva: <http://127.0.0.1:8000/docs>
 - Health check: `GET /health`
 
@@ -105,18 +107,27 @@ Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 
 ## Perfil de búsqueda configurable
 
-El cuerpo de la búsqueda se define una sola vez en `SEARCH_PROFILE_JSON` y lo comparten el
-job diario, la UI y `POST /api/v1/search-profile/run`:
+El perfil se define una sola vez y lo comparten el job diario, la UI y
+`POST /api/v1/search-profile/run`:
 
 ```dotenv
 SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
 ```
 
-- `GET /api/v1/search-profile` devuelve el perfil activo.
-- `POST /api/v1/search-profile/run` ejecuta exactamente ese perfil (`trigger: "profile"`).
+- **Editable desde la UI**: el formulario «Editar criterios» guarda el perfil y pasa a ser
+  el que usan la búsqueda manual y el job diario, sin reiniciar el pod.
+- `GET /api/v1/search-profile` devuelve el perfil activo y su `source`
+  (`override` = guardado en la UI, `profile` = `SEARCH_PROFILE_JSON`, `legacy` = `DAILY_*`).
+- `PUT /api/v1/search-profile` guarda el perfil editado (mismo cuerpo que `POST /searches`).
+- `DELETE /api/v1/search-profile` restaura el perfil preconfigurado.
+- `POST /api/v1/search-profile/run` ejecuta el perfil efectivo (`trigger: "profile"`).
 - `SEARCH_PROFILE_JSON=` (vacío) recupera los criterios heredados `DAILY_*`.
 - Un JSON inválido impide arrancar con `CONFIGURATION_ERROR` y el campo culpable en
   `details.fields`.
+
+El perfil guardado vive en `search-profile.json` junto al directorio de resultados
+(`/data/search-profile.json` con el PVC de Kubernetes), así que sobrevive a los reinicios y
+lo ven todos los dispositivos.
 
 ## CI/CD y despliegue en Kubernetes (ARM64)
 
@@ -153,8 +164,13 @@ kubectl apply -k deploy/k8s
 kubectl -n house-finder set image deployment/house-finder \
   api=ghcr.io/oaicstef/house-finder:0.1.0
 kubectl -n house-finder rollout status deployment/house-finder
-kubectl -n house-finder port-forward svc/house-finder 8000:80
 ```
+
+La UI queda publicada en `https://oaichousefinder.duckdns.org` (Ingress nginx + TLS de
+cert-manager). Para depurar sin pasar por el Ingress:
+`kubectl -n house-finder port-forward svc/house-finder 8000:80`. El registro A de DuckDNS
+debe apuntar a la IP pública del clúster; el detalle está en
+[deploy/k8s/README.md](deploy/k8s/README.md).
 
 Detalles (Secret de tokens, PVC, cambio del perfil con ConfigMap, réplica única por el
 scheduler, pipeline) en [deploy/k8s/README.md](deploy/k8s/README.md). La alternativa con
@@ -193,10 +209,13 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| `GET` | `/` | UI con fotos de los anuncios (botón «Ejecutar búsqueda»). |
+| `GET` | `/` | UI: criterios editables, última búsqueda guardada y fotos de los anuncios. |
 | `POST` | `/api/v1/searches` | Búsqueda síncrona. `201` + anuncios filtrados. `502` scraper, `503` clasificador, `422` validación. |
-| `GET` | `/api/v1/search-profile` | Perfil de búsqueda activo (`SEARCH_PROFILE_JSON`). |
-| `POST` | `/api/v1/search-profile/run` | Ejecuta el perfil configurado (`trigger: profile`). |
+| `GET` | `/api/v1/search-profile` | Perfil efectivo y su origen (`override`/`profile`/`legacy`). |
+| `PUT` | `/api/v1/search-profile` | Guarda el perfil editado en la UI; lo usan la UI y el job diario. |
+| `DELETE` | `/api/v1/search-profile` | Restaura el perfil preconfigurado (`SEARCH_PROFILE_JSON` o `DAILY_*`). |
+| `POST` | `/api/v1/search-profile/run` | Ejecuta el perfil efectivo (`trigger: profile`). |
+| `GET` | `/api/v1/searches/latest` | Última búsqueda guardada (la que pinta la UI al abrirse). `404` si no hay. |
 | `GET` | `/api/v1/searches/{search_id}/results` | Resultados de una búsqueda previa. `404` `SEARCH_NOT_FOUND`. |
 | `POST` | `/api/v1/scheduled-searches/run` | Dispara el job diario. `executed=false` si ya se ejecutó hoy. |
 | `GET` | `/health` | Estado y si el scheduler está activo. |

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Buscador inmobiliario</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=2" />
   </head>
   <body>
     <header class="topbar">
@@ -12,8 +12,8 @@
         <div>
           <h1>Buscador inmobiliario</h1>
           <p class="topbar__hint">
-            Perfil configurado con <code>SEARCH_PROFILE_JSON</code>. El mismo criterio usa el
-            job diario de las 07:00.
+            Cambia los criterios y pulsa <strong>Guardar criterios</strong>. El mismo perfil
+            lo usan la búsqueda manual y el job diario de las 07:00.
           </p>
         </div>
         <form id="run-form" class="topbar__actions">
@@ -31,10 +31,72 @@
         </form>
       </div>
       <ul id="criteria" class="criteria" aria-label="Criterios de búsqueda"></ul>
+      <details id="criteria-editor" class="editor" open>
+        <summary>Editar criterios</summary>
+        <form id="criteria-form" class="editor__form">
+          <label class="field">
+            Zona
+            <input id="f-location" name="location" type="text" required maxlength="120" />
+          </label>
+          <fieldset class="field field--portals">
+            <legend>Portales</legend>
+            <label><input id="f-idealista" type="checkbox" value="idealista" /> Idealista</label>
+            <label><input id="f-fotocasa" type="checkbox" value="fotocasa" /> Fotocasa</label>
+          </fieldset>
+          <label class="field">
+            Código postal
+            <input id="f-postal-code" name="postal_code" type="text" inputmode="numeric" maxlength="5" />
+          </label>
+          <label class="field">
+            Radio (km)
+            <input id="f-radius" name="radius_km" type="number" min="1" max="50" step="1" />
+          </label>
+          <label class="field">
+            Precio mín. (€)
+            <input id="f-min-price" name="min_price_eur" type="number" min="0" step="1000" />
+          </label>
+          <label class="field">
+            Precio máx. (€)
+            <input id="f-max-price" name="max_price_eur" type="number" min="0" step="1000" />
+          </label>
+          <label class="field">
+            Superficie mín. (m²)
+            <input id="f-min-size" name="min_size_m2" type="number" min="1" step="1" />
+          </label>
+          <label class="field">
+            Habitaciones mín.
+            <input id="f-min-rooms" name="min_rooms" type="number" min="0" max="20" step="1" />
+          </label>
+          <label class="field">
+            Año mín. de construcción
+            <input id="f-min-year" name="min_year_built" type="number" min="1800" max="2100" step="1" />
+          </label>
+          <label class="field">
+            Resultados máx.
+            <input id="f-max-results" name="max_results" type="number" min="1" max="100" step="1" />
+          </label>
+          <label class="field field--wide">
+            Requisitos obligatorios (separados por comas)
+            <input id="f-must-have" name="must_have" type="text" placeholder="padel, piscina" />
+          </label>
+          <label class="field field--wide">
+            Preferencias
+            <textarea id="f-preferences" name="preferences" rows="2" maxlength="1000"></textarea>
+          </label>
+          <div class="editor__actions field--wide">
+            <button type="submit" id="save-criteria">Guardar criterios</button>
+            <button type="button" id="reset-criteria" class="button--ghost">
+              Restaurar preconfigurados
+            </button>
+            <span id="profile-source" class="editor__source"></span>
+          </div>
+        </form>
+      </details>
     </header>
 
     <main class="container">
       <section id="status" class="status" role="status" aria-live="polite"></section>
+      <section id="latest-note" class="latest-note" hidden></section>
       <section id="summary" class="summary" hidden></section>
       <section id="results" class="grid" aria-label="Anuncios encontrados"></section>
       <template id="card-template">
@@ -60,6 +122,6 @@
       </template>
     </main>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=2" defer></script>
   </body>
 </html>

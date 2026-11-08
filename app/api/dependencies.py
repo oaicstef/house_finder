@@ -12,31 +12,42 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from app.application.services.scheduled_search import ScheduledSearchService
+from app.application.services.search_profile import (
+    ProfileSource,
+    SearchProfileService,
+)
 from app.application.services.search_service import SearchService
 from app.config import Settings, get_settings
 from app.domain.exceptions import ConfigurationException
-from app.domain.models import Portal
+from app.domain.models import Portal, SearchCriteria
 from app.domain.ports import (
     ClassifierPort,
     ListingRepository,
     ScheduledSearchServiceProtocol,
     ScraperPort,
+    SearchProfileStore,
     SearchServiceProtocol,
 )
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
 from app.infrastructure.geocoding.carto_ciudad_locator import CartoCiudadPostalCodeLocator
 from app.infrastructure.repositories.json_file_repository import JsonFileListingRepository
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
+from app.infrastructure.repositories.search_profile_store import (
+    InMemorySearchProfileStore,
+    JsonSearchProfileStore,
+)
 from app.infrastructure.scrapers.apify_scraper import ApifyListingScraper
 
 __all__ = [
     "ContainerDep",
     "ScheduledSearchServiceDep",
+    "SearchProfileServiceDep",
     "SearchServiceDep",
     "ServiceContainer",
     "build_container",
     "get_container",
     "get_scheduled_search_service",
+    "get_search_profile_service",
     "get_search_service",
 ]
 
@@ -51,6 +62,8 @@ class ServiceContainer:
     classifier: ClassifierPort
     search_service: SearchServiceProtocol
     scheduled_search_service: ScheduledSearchServiceProtocol
+    search_profile_service: SearchProfileService
+    search_profile_store: SearchProfileStore
 
 
 def build_container(settings: Settings | None = None) -> ServiceContainer:
@@ -58,10 +71,15 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
     resolved = settings or get_settings()
 
     repository: ListingRepository
+    profile_store: SearchProfileStore
     if (resolved.results_dir or "").strip():
         repository = JsonFileListingRepository(resolved.results_dir)
+        profile_store = JsonSearchProfileStore(
+            resolved.resolved_search_profile_file or "search-profile.json"
+        )
     else:
         repository = InMemoryListingRepository()
+        profile_store = InMemorySearchProfileStore()
 
     scraper: ScraperPort = ApifyListingScraper(
         token=resolved.apify_token,
@@ -92,10 +110,21 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         repository,
         postal_code_locator=postal_code_locator,
     )
+
+    def default_profile() -> tuple[SearchCriteria, ProfileSource]:
+        """Perfil de configuración y su origen (``SEARCH_PROFILE_JSON`` o ``DAILY_*``)."""
+        source: ProfileSource = (
+            "legacy" if resolved.build_search_profile() is None else "profile"
+        )
+        return resolved.build_daily_criteria(), source
+
+    profile_service = SearchProfileService(profile_store, default_profile)
     scheduled_search_service = ScheduledSearchService(
         search_service,
         repository,
         resolved.build_daily_criteria(),
+        # La UI puede cambiar el perfil: el cron lo resuelve en cada ejecución.
+        criteria_provider=profile_service.resolve_criteria,
     )
 
     return ServiceContainer(
@@ -105,6 +134,8 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         classifier=classifier,
         search_service=search_service,
         scheduled_search_service=scheduled_search_service,
+        search_profile_service=profile_service,
+        search_profile_store=profile_store,
     )
 
 
@@ -136,4 +167,16 @@ SearchServiceDep = Annotated[SearchServiceProtocol, Depends(get_search_service)]
 ScheduledSearchServiceDep = Annotated[
     ScheduledSearchServiceProtocol,
     Depends(get_scheduled_search_service),
+]
+
+
+def get_search_profile_service(
+    container: Annotated[ServiceContainer, Depends(get_container)],
+) -> SearchProfileService:
+    return container.search_profile_service
+
+
+SearchProfileServiceDep = Annotated[
+    SearchProfileService,
+    Depends(get_search_profile_service),
 ]

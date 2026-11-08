@@ -11,6 +11,7 @@ deploy/k8s/
 ├── pvc.yaml              # volumen de resultados (RESULTS_DIR=/data/results)
 ├── deployment.yaml       # pod ARM64, réplica única, probes y límites
 ├── service.yaml          # ClusterIP :80 -> :8000
+├── ingress.yaml          # https://oaichousefinder.duckdns.org + TLS cert-manager
 └── kustomization.yaml    # kubectl apply -k deploy/k8s
 ```
 
@@ -62,7 +63,35 @@ kubectl -n house-finder rollout status deploy/house-finder
 
 ## 4. Acceder a la UI
 
-El Service es `ClusterIP`; usa port-forward (o añade tu Ingress si lo necesitas):
+El Service es `ClusterIP`; el Ingress [`ingress.yaml`](ingress.yaml) lo publica en
+`https://oaichousefinder.duckdns.org` con certificado de `cert-manager`. Requisitos:
+
+| Requisito | Detalle |
+|---|---|
+| DNS | El registro A de `oaichousefinder.duckdns.org` debe apuntar a la IP pública del clúster (la del `ingress-nginx`, hoy `204.216.209.9`). |
+| Ingress controller | `ingressClassName: nginx`, con el `ClusterIssuer` `letsencrypt-prod` (solo HTTP-01: no admite proxy intermedio ni DNS-01). |
+| Certificado | El primer `apply` crea la orden ACME y el Secret `house-finder-duckdns-tls`; el TLS del Ingress queda listo cuando la orden pasa a `Ready`. |
+
+Actualizar el registro de DuckDNS (el token no está en el repo):
+
+```bash
+curl "https://www.duckdns.org/update?domains=oaichousefinder&token=$DUCKDNS_TOKEN&ip=204.216.209.9"
+dig +short oaichousefinder.duckdns.org   # debe devolver 204.216.209.9
+```
+
+Seguimiento del certificado:
+
+```bash
+kubectl -n house-finder get ingress house-finder
+kubectl -n house-finder get certificate,order,challenge
+kubectl -n house-finder describe certificate house-finder-duckdns-tls
+```
+
+Si la orden falla con `wrong status code '404'` o timeouts en el `challenge`, el DNS sigue
+apuntando a otro sitio (p. ej. el Nginx Proxy Manager de casa, que no puede resolver el
+HTTP-01 del clúster). El Ingress está bien: hay que corregir el registro A.
+
+También puedes seguir usando port-forward para depurar sin pasar por el Ingress:
 
 ```bash
 kubectl -n house-finder port-forward svc/house-finder 8000:80
@@ -73,8 +102,22 @@ kubectl -n house-finder port-forward svc/house-finder 8000:80
 
 ## 5. Cambiar la búsqueda sin rebuild
 
-Edita `SEARCH_PROFILE_JSON` en `configmap.yaml` (o con
-`kubectl -n house-finder edit configmap house-finder-config`) y reinicia:
+Desde la UI (**Editar criterios → Guardar criterios**) o con la API:
+
+```bash
+curl -X PUT https://oaichousefinder.duckdns.org/api/v1/search-profile \
+  -H "Content-Type: application/json" \
+  -d '{"location":"Madrid","portals":["idealista","fotocasa"],"postal_code":"28031","radius_km":5,"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"min_year_built":2020,"must_have":["padel"]}'
+
+curl -X DELETE https://oaichousefinder.duckdns.org/api/v1/search-profile  # restaurar
+```
+
+El perfil se guarda en `/data/search-profile.json` (PVC), así que sobrevive a los rollouts y
+lo comparten todos los dispositivos. `SEARCH_PROFILE_JSON` sigue siendo el valor por defecto
+que restaura el `DELETE`.
+
+También puedes editar `SEARCH_PROFILE_JSON` en `configmap.yaml` (o con
+`kubectl -n house-finder edit configmap house-finder-config`) y reiniciar:
 
 ```bash
 kubectl -n house-finder rollout restart deploy/house-finder
@@ -135,8 +178,10 @@ kubectl -n house-finder rollout status deployment/house-finder --timeout=180s
 | Arquitectura | `nodeSelector: kubernetes.io/arch: arm64`; la imagen `python:3.13-slim` es multi-arch. |
 | Réplicas | Mantén `replicas: 1` y `strategy: Recreate`: dos pods ejecutarían el cron dos veces. |
 | Persistencia | PVC `ReadWriteOnce` de 1 Gi. `fsGroup: 10001` permite escribir al usuario no root. |
+| Perfil editable | La UI guarda `search-profile.json` en `/data` (mismo PVC); el cron lo lee antes de cada ejecución. |
 | Raíz de solo lectura | `readOnlyRootFilesystem: true`: la app únicamente escribe en `/data` (PVC). |
 | Imagen endurecida | El Dockerfile aplica `apt-get upgrade` y elimina `pip` tras instalar dependencias (sin CVEs vendorizados y sin herramientas de instalación en producción). |
 | Imágenes de anuncios | La UI enlaza las URLs del portal; no se almacenan binarios. Si el portal bloquea el hotlink, la tarjeta muestra «Sin foto». |
 | Sin autenticación | La API y la UI no tienen login: expón el Service solo en redes de confianza. |
+| Ingress | `ingress.yaml` publica `https://oaichousefinder.duckdns.org`; el timeout de nginx sube a 660 s porque `POST /api/v1/search-profile/run` es síncrono y puede tardar varios minutos. |
 | Recursos | 100m/256Mi de request y 1 CPU/768Mi de límite; ajusta según el volumen de anuncios. |

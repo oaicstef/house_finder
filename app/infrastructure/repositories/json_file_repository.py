@@ -133,6 +133,11 @@ class JsonFileListingRepository:
                 continue
         return results
 
+    async def find_latest(self) -> SearchResult | None:
+        """Búsqueda más reciente en disco; tolera ficheros corruptos intermedios."""
+        recent = await self.list_recent(limit=1)
+        return recent[0] if recent else None
+
     def _path_for(self, search_id: UUID) -> Path:
         return self._dir / f"{search_id}.json"
 

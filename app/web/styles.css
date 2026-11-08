@@ -115,6 +115,95 @@ button:disabled {
   font-weight: 600;
 }
 
+.editor {
+  max-width: 1280px;
+  margin: 12px auto 0;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.editor summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.editor__form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px 16px;
+  margin-top: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.field input,
+.field textarea {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  width: 100%;
+}
+
+.field--wide {
+  grid-column: 1 / -1;
+}
+
+.field--portals {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px 10px 8px;
+  margin: 0;
+}
+
+.field--portals legend {
+  padding: 0 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.field--portals label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 14px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.field--portals input {
+  width: auto;
+}
+
+.editor__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.button--ghost {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.editor__source {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 .container {
   max-width: 1280px;
   margin: 0 auto;
@@ -146,6 +235,20 @@ button:disabled {
 
 .summary strong {
   color: var(--text);
+}
+
+.summary__warning {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.latest-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 4px 0 0;
 }
 
 .grid {

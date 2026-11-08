@@ -446,6 +446,16 @@ Respuesta real (`201 Created`):
 curl http://127.0.0.1:8000/api/v1/searches/329f986c-2bbd-405e-8ce6-8385428cac8d/results
 ```
 
+### 6.3.1 Ver la última búsqueda guardada
+
+Lo que pinta la UI al abrirse (misma forma que `POST /api/v1/searches`):
+
+```bash
+curl http://127.0.0.1:8000/api/v1/searches/latest
+```
+
+`404` con `SEARCH_NOT_FOUND` mientras no haya ninguna búsqueda guardada.
+
 ### 6.4 Disparar el job diario manualmente
 
 ```bash
@@ -747,8 +757,8 @@ El job nunca propaga excepciones: cualquier fallo se registra con `logger.except
 
 ## 11. Perfil de búsqueda configurable y UI
 
-El cuerpo de la búsqueda vive en **una sola variable**, `SEARCH_PROFILE_JSON`, y lo usan el
-job diario, la UI y `POST /api/v1/search-profile/run`:
+El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El valor de
+fábrica vive en **una sola variable**, `SEARCH_PROFILE_JSON`:
 
 ```dotenv
 SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max_price_eur":900000,"min_size_m2":140,"min_rooms":4,"max_results":50,"preferences":"Casa o chalet, padel cominitario, piscina comunitaria","must_have":["padel"],"postal_code":"28031","radius_km":5,"min_year_built":2020}
@@ -756,20 +766,43 @@ SEARCH_PROFILE_JSON={"location":"Madrid","portals":["idealista","fotocasa"],"max
 
 | Acción | Cómo |
 |---|---|
-| Ver el perfil activo | `curl http://127.0.0.1:8000/api/v1/search-profile` |
+| Ver el perfil activo | `curl http://127.0.0.1:8000/api/v1/search-profile` (`source` indica el origen) |
 | Ejecutarlo | `curl -X POST http://127.0.0.1:8000/api/v1/search-profile/run` |
-| Cambiarlo | edita `SEARCH_PROFILE_JSON` y reinicia (en k8s, ConfigMap + `rollout restart`) |
-| Volver a `DAILY_*` | deja `SEARCH_PROFILE_JSON=` vacío |
+| **Cambiarlo desde la UI** | formulario «Editar criterios» → **Guardar criterios** |
+| Cambiarlo por API | `curl -X PUT .../search-profile -H 'Content-Type: application/json' -d @perfil.json` |
+| Restaurar el preconfigurado | `curl -X DELETE http://127.0.0.1:8000/api/v1/search-profile` |
+| Volver a `DAILY_*` | deja `SEARCH_PROFILE_JSON=` vacío y borra el perfil guardado |
 
-Formato: el mismo cuerpo que `POST /api/v1/searches`, en **una línea**. Si el JSON es
-inválido o incumple el contrato, el arranque falla con `CONFIGURATION_ERROR` y
-`details.fields` indica el campo.
+```bash
+# Guardar un perfil (mismo cuerpo que POST /api/v1/searches)
+curl -X PUT http://127.0.0.1:8000/api/v1/search-profile \
+  -H "Content-Type: application/json" \
+  -d '{"location":"Valencia","portals":["idealista"],"postal_code":"46001","radius_km":3,
+       "max_price_eur":600000,"min_size_m2":120,"min_rooms":4,"must_have":["piscina"]}'
+
+# Restaurar el preconfigurado
+curl -X DELETE http://127.0.0.1:8000/api/v1/search-profile
+```
+
+Precedencia: **perfil guardado** (`source: override`) > `SEARCH_PROFILE_JSON`
+(`source: profile`) > `DAILY_*` (`source: legacy`). El perfil guardado se escribe en
+`search-profile.json` junto al directorio de resultados (`/data/search-profile.json` en
+Kubernetes), así que lo comparten la UI y el cron y sobrevive a los reinicios.
+
+Formato: el mismo cuerpo que `POST /api/v1/searches`, en **una línea**. Si el JSON de
+configuración es inválido o incumple el contrato, el arranque falla con
+`CONFIGURATION_ERROR` y `details.fields` indica el campo; un `PUT` inválido devuelve `422`
+y no toca el perfil guardado.
 
 ### La UI
 
 Abre <http://127.0.0.1:8000/>. La página muestra los criterios activos (CP, radio, precio,
-m², habitaciones, año, obligatorios) y un botón **Ejecutar búsqueda** que llama a
-`/api/v1/search-profile/run`.
+m², habitaciones, año, obligatorios), un panel **Editar criterios** y un botón
+**Ejecutar búsqueda** que llama a `/api/v1/search-profile/run`.
+
+Al abrirse carga `GET /api/v1/searches/latest`, así que **siempre se ven los resultados de
+la última búsqueda guardada**, aunque se abra desde otro dispositivo o después de reiniciar
+el navegador (por eso el móvil ya no aparece vacío).
 
 Cada tarjeta incluye:
 

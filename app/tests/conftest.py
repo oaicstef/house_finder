@@ -12,6 +12,7 @@ import pytest
 
 from app.api.dependencies import ServiceContainer
 from app.application.services.scheduled_search import ScheduledSearchService
+from app.application.services.search_profile import SearchProfileService
 from app.application.services.search_service import SearchService
 from app.config import Settings
 from app.domain.exceptions import ClassifierException, ScraperException
@@ -22,6 +23,7 @@ from app.domain.models import (
     SearchCriteria,
 )
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
+from app.infrastructure.repositories.search_profile_store import InMemorySearchProfileStore
 
 
 class RecordingLogger:
@@ -184,6 +186,7 @@ def make_container(settings: Settings) -> Any:
         search_criteria: SearchCriteria | None = None,
         postal_code_locator: Any = None,
         today: Any = None,
+        profile_store: InMemorySearchProfileStore | None = None,
     ) -> ServiceContainer:
         repo = repository or InMemoryListingRepository(logger=RecordingLogger())
         scraper_port = scraper or FakeScraper([make_listing()])
@@ -196,10 +199,33 @@ def make_container(settings: Settings) -> Any:
             logger=RecordingLogger(),
             today=today,
         )
+        default_criteria = search_criteria or SearchCriteria(location="Madrid")
+
+        def default_profile() -> tuple[SearchCriteria, str]:
+            # Perfil "de fábrica" del fixture: el de ``settings`` si lo hay.
+            if search_criteria is not None:
+                return search_criteria, "legacy"
+            if settings.build_search_profile() is None:
+                return settings.build_daily_criteria(), "legacy"
+            return settings.build_daily_criteria(), "profile"
+
+        store = profile_store or InMemorySearchProfileStore()
+        profile_service = SearchProfileService(
+            store,
+            default_profile,  # type: ignore[arg-type]
+            logger=RecordingLogger(),
+        )
+
+        async def scheduled_criteria() -> SearchCriteria:
+            """El cron usa el override de la UI o su criterio por defecto."""
+            saved = await store.get()
+            return saved if saved is not None else default_criteria
+
         scheduled_service = ScheduledSearchService(
             search_service,
             repo,
-            search_criteria or SearchCriteria(location="Madrid"),
+            default_criteria,
+            criteria_provider=scheduled_criteria,
             logger=RecordingLogger(),
             today=today,
         )
@@ -210,6 +236,8 @@ def make_container(settings: Settings) -> Any:
             classifier=classifier_port,
             search_service=search_service,
             scheduled_search_service=scheduled_service,
+            search_profile_service=profile_service,
+            search_profile_store=store,
         )
 
     return _build

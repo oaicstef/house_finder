@@ -162,6 +162,26 @@ class SearchCreateRequest(BaseModel):
             min_year_built=self.min_year_built,
         )
 
+    @classmethod
+    def from_domain(cls, criteria: SearchCriteria) -> "SearchCreateRequest":
+        """Inverso de ``to_domain`` para devolver el perfil activo."""
+        return cls(
+            location=criteria.location,
+            portals=[portal.value for portal in criteria.portals],
+            min_price_eur=criteria.min_price_eur,
+            max_price_eur=criteria.max_price_eur,
+            min_size_m2=criteria.min_size_m2,
+            min_rooms=criteria.min_rooms,
+            max_results=criteria.max_results,
+            preferences=criteria.preferences,
+            must_have=list(criteria.must_have),
+            postal_code=criteria.postal_code,
+            radius_km=criteria.radius_km,
+            latitude=criteria.latitude,
+            longitude=criteria.longitude,
+            min_year_built=criteria.min_year_built,
+        )
+
 
 class ListingResponse(BaseModel):
     """Anuncio relevante devuelto al cliente."""
@@ -268,11 +288,27 @@ class ScheduledRunResponse(BaseModel):
 class SearchProfileResponse(BaseModel):
     """Perfil de búsqueda activo (el que usa el job diario y la UI)."""
 
-    source: Literal["profile", "legacy"]
+    source: Literal["override", "profile", "legacy"] = Field(
+        description=(
+            "override = guardado desde la UI; profile = SEARCH_PROFILE_JSON; "
+            "legacy = criterios DAILY_*."
+        )
+    )
     profile: dict[str, Any] = Field(
         default_factory=dict,
         description="Cuerpo equivalente a POST /api/v1/searches para el perfil activo.",
     )
+
+    @classmethod
+    def from_criteria(
+        cls,
+        criteria: SearchCriteria,
+        source: str,
+    ) -> "SearchProfileResponse":
+        return cls(
+            source=source,
+            profile=SearchCreateRequest.from_domain(criteria).model_dump(mode="json"),
+        )
 
 
 class HealthResponse(BaseModel):

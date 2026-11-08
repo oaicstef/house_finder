@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: house-finder
+  namespace: house-finder
+  labels:
+    app.kubernetes.io/name: house-finder
+  annotations:
+    # HTTP-01: el registro A del host debe apuntar a la IP pública del ingress-nginx.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # POST /api/v1/search-profile/run espera al scraper (APIFY_TIMEOUT_SECONDS=600);
+    # el timeout por defecto de nginx (60 s) devolvería 504 antes de terminar.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "660"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "660"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: oaichousefinder.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: house-finder
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - oaichousefinder.duckdns.org
+      secretName: house-finder-duckdns-tls

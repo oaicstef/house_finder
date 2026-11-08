@@ -79,3 +79,16 @@ class InMemoryListingRepository:
         async with self._lock:
             self._results.clear()
             self._daily_index.clear()
+
+    async def find_latest(self) -> SearchResult | None:
+        """Búsqueda más reciente por ``created_at``."""
+        try:
+            async with self._lock:
+                if not self._results:
+                    return None
+                return max(self._results.values(), key=lambda result: result.created_at)
+        except Exception as exc:
+            raise RepositoryException(
+                "No se ha podido recuperar la última búsqueda",
+                details={"storage": "memory"},
+            ) from exc

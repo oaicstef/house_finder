@@ -25,6 +25,7 @@ __all__ = [
     "PostalCodeLocatorPort",
     "ScraperPort",
     "ScheduledSearchServiceProtocol",
+    "SearchProfileStore",
     "SearchServiceProtocol",
 ]
 
@@ -92,6 +93,35 @@ class ListingRepository(Protocol):
         """Soporte de idempotencia del job diario: ``None`` si no hay ejecución."""
         ...
 
+    async def find_latest(self) -> SearchResult | None:
+        """Búsqueda más reciente guardada; ``None`` si no hay ninguna."""
+        ...
+
+
+@runtime_checkable
+class SearchProfileStore(Protocol):
+    """Persistencia del perfil de búsqueda editado por el usuario.
+
+    El perfil guardado tiene prioridad sobre ``SEARCH_PROFILE_JSON``; si no existe,
+    el servicio usa el perfil de configuración.
+    """
+
+    async def get(self) -> SearchCriteria | None:
+        """Devuelve ``None`` si no hay perfil guardado o no es legible."""
+        ...
+
+    async def save(self, criteria: SearchCriteria) -> None:
+        """Guarda el perfil de forma atómica.
+
+        Raises:
+            RepositoryException: si el almacenamiento falla.
+        """
+        ...
+
+    async def clear(self) -> None:
+        """Borra el perfil guardado (idempotente)."""
+        ...
+
 
 class SearchServiceProtocol(Protocol):
     """Caso de uso: ejecutar y consultar búsquedas."""
@@ -100,6 +130,9 @@ class SearchServiceProtocol(Protocol):
         ...
 
     async def get_results(self, search_id: UUID) -> SearchResult:
+        ...
+
+    async def get_latest(self) -> SearchResult:
         ...
 
 

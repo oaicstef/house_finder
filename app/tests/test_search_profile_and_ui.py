@@ -313,8 +313,16 @@ def test_ui_index_and_static_assets_are_served(make_container: Any) -> None:
     assert index.status_code == 200
     assert "text/html" in index.headers["content-type"]
     assert "results" in index.text
+    # Editor de criterios y versiones con cache-busting en el HTML.
+    assert 'id="criteria-form"' in index.text
+    assert 'id="save-criteria"' in index.text
+    assert 'id="reset-criteria"' in index.text
+    assert "/static/app.js?v=2" in index.text
     assert script.status_code == 200
     assert "search-profile/run" in script.text
+    # La UI edita el perfil y recupera la última búsqueda guardada.
+    assert 'method: "PUT"' in script.text
+    assert "searches/latest" in script.text
     assert styles.status_code == 200
     assert "--accent" in styles.text
 

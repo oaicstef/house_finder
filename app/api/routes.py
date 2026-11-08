@@ -14,6 +14,7 @@ from fastapi import APIRouter, Path, status
 from app.api.dependencies import (
     ContainerDep,
     ScheduledSearchServiceDep,
+    SearchProfileServiceDep,
     SearchServiceDep,
 )
 from app.api.schemas import (
@@ -24,7 +25,6 @@ from app.api.schemas import (
     SearchProfileResponse,
     SearchResponse,
 )
-from app.domain.exceptions import ConfigurationException
 from app.domain.models import Trigger
 
 __all__ = ["health_router", "router"]
@@ -71,20 +71,54 @@ async def get_search_results(
 
 
 @router.get(
+    "/searches/latest",
+    response_model=SearchResponse,
+    summary="Devuelve la última búsqueda guardada",
+    responses={status.HTTP_404_NOT_FOUND: {"model": ErrorResponse}, **_ERROR_RESPONSES},
+)
+async def get_latest_search(service: SearchServiceDep) -> SearchResponse:
+    """Resultado que la UI pinta al abrirse, venga del dispositivo que venga."""
+    result = await service.get_latest()
+    return SearchResponse.from_domain(result)
+
+
+@router.get(
     "/search-profile",
     response_model=SearchProfileResponse,
     summary="Devuelve el perfil de búsqueda activo",
     responses=_ERROR_RESPONSES,
 )
-async def get_search_profile(container: ContainerDep) -> SearchProfileResponse:
-    """Perfil que usan el job diario y la UI (``SEARCH_PROFILE_JSON``)."""
-    profile = container.settings.build_search_profile()
-    if profile is None:
-        raise ConfigurationException(
-            "SEARCH_PROFILE_JSON no está configurado; revisa DAILY_*",
-            details={"missing": ["SEARCH_PROFILE_JSON"]},
-        )
-    return SearchProfileResponse(source="profile", profile=profile)
+async def get_search_profile(profile: SearchProfileServiceDep) -> SearchProfileResponse:
+    """Perfil efectivo: edición del usuario, ``SEARCH_PROFILE_JSON`` o ``DAILY_*``."""
+    snapshot = await profile.current()
+    return SearchProfileResponse.from_criteria(snapshot.criteria, snapshot.source)
+
+
+@router.put(
+    "/search-profile",
+    response_model=SearchProfileResponse,
+    summary="Guarda el perfil de búsqueda editado en la UI",
+    responses=_ERROR_RESPONSES,
+)
+async def update_search_profile(
+    payload: SearchCreateRequest,
+    profile: SearchProfileServiceDep,
+) -> SearchProfileResponse:
+    """Valida y persiste el perfil; la UI y el job diario lo usan al momento."""
+    snapshot = await profile.update(payload.to_domain())
+    return SearchProfileResponse.from_criteria(snapshot.criteria, snapshot.source)
+
+
+@router.delete(
+    "/search-profile",
+    response_model=SearchProfileResponse,
+    summary="Restaura el perfil de búsqueda configurado",
+    responses=_ERROR_RESPONSES,
+)
+async def reset_search_profile(profile: SearchProfileServiceDep) -> SearchProfileResponse:
+    """Borra el perfil guardado y vuelve a ``SEARCH_PROFILE_JSON`` (o ``DAILY_*``)."""
+    snapshot = await profile.reset()
+    return SearchProfileResponse.from_criteria(snapshot.criteria, snapshot.source)
 
 
 @router.post(
@@ -96,10 +130,10 @@ async def get_search_profile(container: ContainerDep) -> SearchProfileResponse:
 )
 async def run_search_profile(
     service: SearchServiceDep,
-    container: ContainerDep,
+    profile: SearchProfileServiceDep,
 ) -> SearchResponse:
-    """Lanza la búsqueda definida en ``SEARCH_PROFILE_JSON`` (o en ``DAILY_*``)."""
-    criteria = container.settings.build_daily_criteria()
+    """Lanza la búsqueda con el perfil efectivo (incluye la edición de la UI)."""
+    criteria = await profile.resolve_criteria()
     result = await service.run_search(criteria, trigger=Trigger.PROFILE.value)
     return SearchResponse.from_domain(result)
 

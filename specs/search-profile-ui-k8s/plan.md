@@ -244,3 +244,28 @@ salvo el contador.
    verificación se hizo a nivel de resolución de wheels y de manifiestos.
 8. `pytest` → **182 tests** en verde, sin llamadas reales.
 
+## Revisión 2026-11-08 — Ingress HTTPS para `oaichousefinder.duckdns.org`
+
+El Service se publicaba solo como `ClusterIP` (el Ingress estaba explícitamente fuera de
+alcance) y el host `oaichousefinder.duckdns.org` no existía en el clúster.
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Exposición | `deploy/k8s/ingress.yaml`, `ingressClassName: nginx`, host `oaichousefinder.duckdns.org`, path `/` (Prefix) → Service `house-finder:80` | Mismo patrón que los Ingress ya operativos del clúster. |
+| TLS | Anotación `cert-manager.io/cluster-issuer: letsencrypt-prod` y Secret `house-finder-duckdns-tls` | Reutiliza el `ClusterIssuer` existente; cert-manager renueva solo. |
+| DNS | El registro A debe apuntar a la IP pública del `ingress-nginx` | El issuer solo tiene solver HTTP-01, que valida contra el host público. |
+| Timeouts | `proxy-read-timeout` y `proxy-send-timeout` = 660 s | `POST /api/v1/search-profile/run` es síncrono (~61 s medidos) y el límite de Apify es 600 s; el default de nginx (60 s) devolvía 504. |
+| Kustomize | `ingress.yaml` añadido a `resources` | `kubectl apply -k deploy/k8s` publica el host junto con el resto del despliegue; el workflow no necesita cambios. |
+| Fuera de alcance | DNS-01, WAF, rate limiting, autenticación y HPA | El `ClusterIssuer` no tiene solver DNS y la app no tiene login por diseño. |
+
+Criterios de aceptación añadidos:
+
+- [x] `kubectl kustomize deploy/k8s` renderiza el Ingress con host, backend y TLS esperados.
+- [x] `kubectl -n house-finder get ingress house-finder` muestra la IP del controller.
+- [x] El certificado `house-finder-duckdns-tls` alcanza `Ready` (válido hasta 2027-02-06).
+- [x] `https://oaichousefinder.duckdns.org/health` responde 200 (`{"status":"ok","scheduler_enabled":true}`), `/` y `/static/app.js` 200, y HTTP/80 redirige con 308 a HTTPS.
+- [x] El registro A de DuckDNS apunta a la IP pública del clúster (`204.216.209.9`); durante
+  la preparación del cambio resolvía a `79.117.16.157` (Nginx Proxy Manager de casa), lo que
+  habría impedido el HTTP-01.
+
+

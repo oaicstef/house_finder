@@ -1,14 +1,41 @@
-// UI sin dependencias: carga el perfil configurado, lo ejecuta y pinta tarjetas.
+// UI sin dependencias: carga el perfil editable, muestra la última búsqueda y pinta tarjetas.
 const API = "/api/v1";
 
 const criteriaList = document.getElementById("criteria");
 const statusBox = document.getElementById("status");
 const summaryBox = document.getElementById("summary");
+const latestNote = document.getElementById("latest-note");
 const resultsBox = document.getElementById("results");
 const runForm = document.getElementById("run-form");
 const runButton = document.getElementById("run-button");
 const sortSelect = document.getElementById("sort-select");
 const cardTemplate = document.getElementById("card-template");
+const criteriaForm = document.getElementById("criteria-form");
+const saveButton = document.getElementById("save-criteria");
+const resetButton = document.getElementById("reset-criteria");
+const profileSource = document.getElementById("profile-source");
+
+const FIELD_IDS = {
+  location: "f-location",
+  postalCode: "f-postal-code",
+  radius: "f-radius",
+  minPrice: "f-min-price",
+  maxPrice: "f-max-price",
+  minSize: "f-min-size",
+  minRooms: "f-min-rooms",
+  minYear: "f-min-year",
+  maxResults: "f-max-results",
+  mustHave: "f-must-have",
+  preferences: "f-preferences",
+};
+
+const PORTAL_IDS = { idealista: "f-idealista", fotocasa: "f-fotocasa" };
+
+const SOURCE_LABEL = {
+  override: "Perfil guardado desde la UI",
+  profile: "Perfil preconfigurado (SEARCH_PROFILE_JSON)",
+  legacy: "Criterios preconfigurados (DAILY_*)",
+};
 
 const PORTAL_LABEL = { idealista: "Idealista", fotocasa: "Fotocasa" };
 
@@ -46,6 +73,7 @@ function renderCriteria(profile) {
   criteriaList.replaceChildren();
   const entries = [
     ["Zona", profile.postal_code ? `${profile.postal_code} · ${profile.radius_km} km` : profile.location],
+    ["Portales", (profile.portals || []).join(", ") || "—"],
     ["Precio máx.", euros(profile.max_price_eur)],
     ["Superficie mín.", number(profile.min_size_m2, " m²")],
     ["Habitaciones mín.", profile.min_rooms ?? "—"],
@@ -58,6 +86,85 @@ function renderCriteria(profile) {
     item.textContent = `${label}: ${value}`;
     criteriaList.append(item);
   }
+}
+
+function fillForm(profile) {
+  const value = (key) => document.getElementById(FIELD_IDS[key]);
+  value("location").value = profile.location || "";
+  value("postalCode").value = profile.postal_code || "";
+  value("radius").value = profile.radius_km ?? "";
+  value("minPrice").value = profile.min_price_eur ?? "";
+  value("maxPrice").value = profile.max_price_eur ?? "";
+  value("minSize").value = profile.min_size_m2 ?? "";
+  value("minRooms").value = profile.min_rooms ?? "";
+  value("minYear").value = profile.min_year_built ?? "";
+  value("maxResults").value = profile.max_results ?? "";
+  value("mustHave").value = (profile.must_have || []).join(", ");
+  value("preferences").value = profile.preferences || "";
+
+  const selected = new Set(profile.portals || []);
+  for (const [portal, id] of Object.entries(PORTAL_IDS)) {
+    document.getElementById(id).checked = selected.has(portal);
+  }
+}
+
+function readNumber(key) {
+  const raw = document.getElementById(FIELD_IDS[key]).value.trim();
+  if (raw === "") return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readForm() {
+  const portals = Object.entries(PORTAL_IDS)
+    .filter(([, id]) => document.getElementById(id).checked)
+    .map(([portal]) => portal);
+  if (portals.length === 0) {
+    throw new Error("Selecciona al menos un portal");
+  }
+
+  const location = document.getElementById(FIELD_IDS.location).value.trim();
+  if (location.length < 2) {
+    throw new Error("La zona es obligatoria (mínimo 2 caracteres)");
+  }
+
+  const postalCode = document.getElementById(FIELD_IDS.postalCode).value.trim();
+  const mustHave = document
+    .getElementById(FIELD_IDS.mustHave)
+    .value.split(",")
+    .map((term) => term.trim())
+    .filter(Boolean);
+  const preferences = document.getElementById(FIELD_IDS.preferences).value.trim();
+
+  return {
+    location,
+    portals,
+    postal_code: postalCode || null,
+    radius_km: readNumber("radius"),
+    min_price_eur: readNumber("minPrice"),
+    max_price_eur: readNumber("maxPrice"),
+    min_size_m2: readNumber("minSize"),
+    min_rooms: readNumber("minRooms"),
+    min_year_built: readNumber("minYear"),
+    max_results: readNumber("maxResults") ?? 40,
+    must_have: mustHave,
+    preferences: preferences || null,
+  };
+}
+
+async function parseError(response) {
+  let body = null;
+  try {
+    body = await response.json();
+  } catch {
+    return `${response.status} ${response.statusText}`;
+  }
+  const code = body?.error?.code || response.status;
+  const message = body?.error?.message || "Error desconocido";
+  const fields = (body?.error?.details?.fields || [])
+    .map((field) => `${(field.loc || []).slice(1).join(".") || "cuerpo"}: ${field.msg}`)
+    .join("; ");
+  return fields ? `${code}: ${message} (${fields})` : `${code}: ${message}`;
 }
 
 function sortListings(listingList, mode) {
@@ -166,6 +273,21 @@ function renderSummary(result) {
     item.append(`${label}: `, strong);
     summaryBox.append(item);
   }
+  for (const warning of result.warnings || []) {
+    const item = document.createElement("span");
+    item.className = "summary__warning";
+    item.textContent = warning;
+    summaryBox.append(item);
+  }
+}
+
+function renderLatestNote(result) {
+  const created = new Date(result.created_at);
+  const when = Number.isNaN(created.getTime())
+    ? result.run_date
+    : created.toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
+  latestNote.hidden = false;
+  latestNote.textContent = `Resultados de la última búsqueda guardada (${when}).`;
 }
 
 async function loadProfile() {
@@ -176,11 +298,76 @@ async function loadProfile() {
       throw new Error(body?.error?.message || "No se ha podido leer el perfil");
     }
     renderCriteria(body.profile);
+    fillForm(body.profile);
+    profileSource.textContent = SOURCE_LABEL[body.source] || "";
   } catch (error) {
     setStatus(
       `Perfil no disponible: ${error.message}. Revisa SEARCH_PROFILE_JSON en la configuración.`,
       true,
     );
+  }
+}
+
+async function loadLatest() {
+  try {
+    const response = await fetch(`${API}/searches/latest`);
+    if (response.status === 404) {
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+    const body = await response.json();
+    currentListings = body.listings || [];
+    renderSummary(body);
+    renderListings();
+    renderLatestNote(body);
+  } catch (error) {
+    setStatus(`No se han podido cargar los últimos resultados: ${error.message}`, true);
+  }
+}
+
+async function saveCriteria(event) {
+  event.preventDefault();
+  saveButton.disabled = true;
+  try {
+    const payload = readForm();
+    const response = await fetch(`${API}/search-profile`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+    const body = await response.json();
+    renderCriteria(body.profile);
+    fillForm(body.profile);
+    profileSource.textContent = SOURCE_LABEL[body.source] || "";
+    setStatus("Criterios guardados. Pulsa «Ejecutar búsqueda» para aplicarlos ahora.");
+  } catch (error) {
+    setStatus(`No se han podido guardar los criterios: ${error.message}`, true);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function resetCriteria() {
+  resetButton.disabled = true;
+  try {
+    const response = await fetch(`${API}/search-profile`, { method: "DELETE" });
+    if (!response.ok) {
+      throw new Error(await parseError(response));
+    }
+    const body = await response.json();
+    renderCriteria(body.profile);
+    fillForm(body.profile);
+    profileSource.textContent = SOURCE_LABEL[body.source] || "";
+    setStatus("Criterios restaurados a los preconfigurados.");
+  } catch (error) {
+    setStatus(`No se han podido restaurar los criterios: ${error.message}`, true);
+  } finally {
+    resetButton.disabled = false;
   }
 }
 
@@ -196,14 +383,13 @@ async function runSearch(event) {
     const response = await fetch(`${API}/search-profile/run`, { method: "POST" });
     const body = await response.json();
     if (!response.ok) {
-      const code = body?.error?.code || response.status;
-      const message = body?.error?.message || "Error desconocido";
-      throw new Error(`${code}: ${message}`);
+      throw new Error(await parseError(response));
     }
 
     currentListings = body.listings || [];
     renderSummary(body);
     renderListings();
+    renderLatestNote(body);
     setStatus(
       currentListings.length === 0
         ? "La búsqueda terminó sin anuncios que cumplan todos los requisitos."
@@ -218,8 +404,11 @@ async function runSearch(event) {
 }
 
 runForm.addEventListener("submit", runSearch);
+criteriaForm.addEventListener("submit", saveCriteria);
+resetButton.addEventListener("click", resetCriteria);
 sortSelect.addEventListener("change", () => {
   if (currentListings.length > 0) renderListings();
 });
 
 loadProfile();
+loadLatest();

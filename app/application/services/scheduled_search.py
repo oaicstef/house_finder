@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from datetime import date
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from app.domain.exceptions import DomainException
 from app.domain.models import SearchCriteria, SearchResult
@@ -31,14 +31,22 @@ class ScheduledSearchService:
         repository: ListingRepository,
         criteria: SearchCriteria,
         *,
+        criteria_provider: Callable[[], Awaitable[SearchCriteria]] | None = None,
         logger: Any | None = None,
         today: Callable[[], date] | None = None,
     ) -> None:
         self._search_service = search_service
         self._repository = repository
         self._criteria = criteria
+        # El perfil puede cambiar desde la UI: se resuelve al inicio de cada ejecución.
+        self._criteria_provider = criteria_provider
         self._logger = logger or get_logger("app.scheduler")
         self._today = today or date.today
+
+    async def _resolve_criteria(self) -> SearchCriteria:
+        if self._criteria_provider is None:
+            return self._criteria
+        return await self._criteria_provider()
 
     async def run_daily_job(self, *, raise_on_error: bool = True) -> SearchResult | None:
         """Ejecuta la búsqueda del día.
@@ -50,8 +58,9 @@ class ScheduledSearchService:
         Raises:
             DomainException: solo si ``raise_on_error`` es ``True`` (invocación manual).
         """
+        criteria = await self._resolve_criteria()
         run_date = self._today()
-        fingerprint = self._criteria.fingerprint()
+        fingerprint = criteria.fingerprint()
         started = time.perf_counter()
 
         previous = await self._repository.find_by_criteria_and_day(fingerprint, run_date)
@@ -66,7 +75,7 @@ class ScheduledSearchService:
             return None
 
         try:
-            result = await self._search_service.run_search(self._criteria, trigger="scheduler")
+            result = await self._search_service.run_search(criteria, trigger="scheduler")
         except DomainException as exc:
             self._logger.warning(
                 "scheduled_search_failed",
