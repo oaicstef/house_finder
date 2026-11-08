@@ -1,0 +1,73 @@
+name: Probe Apify listing fields
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install client
+        run: pip install --quiet 'apify-client>=3,<4'
+
+      - name: Fetch one listing per portal and print field names
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from apify_client import ApifyClient
+
+          client = ApifyClient(os.environ["APIFY_TOKEN"])
+
+          def dataset_id(run):
+              return getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
+
+          def show(label, item):
+              print(f"--- {label} ---")
+              print("top-level keys:", sorted(item.keys()))
+              details = item.get("_details")
+              print("_details type:", type(details).__name__)
+              if isinstance(details, dict):
+                  print("_details keys:", sorted(details.keys()))
+              scopes = [("item", item)]
+              if isinstance(details, dict):
+                  scopes.append(("_details", details))
+              for scope, data in scopes:
+                  for key, value in data.items():
+                      if any(token in key.lower() for token in ("energ", "cert")):
+                          print(f"{scope}.{key} = {json.dumps(value, ensure_ascii=False)[:600]}")
+              if isinstance(details, dict):
+                  for key, value in details.items():
+                      if isinstance(value, dict):
+                          print(f"_details.{key} keys:", sorted(value.keys()))
+
+          probes = [
+              ("idealista", "igolaizola/idealista-scraper", {
+                  "operation": "sale", "propertyType": "homes", "country": "es",
+                  "location": "Madrid", "maxItems": 1, "fetchDetails": True,
+              }),
+              ("fotocasa", "igolaizola/fotocasa-scraper", {
+                  "operation": "buy", "propertyType": "home",
+                  "location": "Madrid", "maxItems": 1,
+              }),
+          ]
+          for label, actor, run_input in probes:
+              try:
+                  run = client.actor(actor).call(run_input=run_input)
+                  items = list(client.dataset(dataset_id(run)).iterate_items())
+                  if not items:
+                      print(f"{label}: sin items")
+                      continue
+                  show(label, items[0])
+              except Exception as exc:
+                  print(f"{label}: ERROR {type(exc).__name__}: {exc}")
+          PY
