@@ -14,6 +14,12 @@ const criteriaForm = document.getElementById("criteria-form");
 const saveButton = document.getElementById("save-criteria");
 const resetButton = document.getElementById("reset-criteria");
 const profileSource = document.getElementById("profile-source");
+const criteriaEditor = document.getElementById("criteria-editor");
+
+// En escritorio el editor arranca abierto; en móvil, cerrado para ver los resultados.
+if (criteriaEditor && window.matchMedia("(min-width: 821px)").matches) {
+  criteriaEditor.open = true;
+}
 
 const FIELD_IDS = {
   location: "f-location",
