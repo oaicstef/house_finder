@@ -74,6 +74,8 @@ _ENERGY_KEYS: tuple[str, ...] = (
     "energyClass",
     "energyLabel",
     "energyEfficiency",
+    "energyCertificationType",
+    "energyPerformance",
 )
 
 #: "B", "b", "Clase B", "B - 45 kWh/m²"... pero nunca la C de "certificate".
@@ -238,7 +240,17 @@ def _energy_rating_from_value(value: Any) -> str | None:
         match = _ENERGY_RATING_PATTERN.match(value)
         return match.group(1).upper() if match else None
     if isinstance(value, Mapping):
-        for key in ("rating", "energyLevel", "energyConsumption", "level", "value", "label"):
+        # Idealista publica la letra en ``energyConsumption.type`` ("e"); otros
+        # portales usan ``rating``/``value``/``label``.
+        for key in (
+            "energyConsumption",
+            "rating",
+            "energyLevel",
+            "type",
+            "level",
+            "value",
+            "label",
+        ):
             rating = _energy_rating_from_value(value.get(key))
             if rating:
                 return rating
@@ -251,6 +263,9 @@ def _energy_rating(item: Mapping[str, Any]) -> str | None:
     details = item.get("_details")
     if isinstance(details, Mapping):
         sources.append(details)
+        extra = details.get("moreCharacteristics")
+        if isinstance(extra, Mapping):
+            sources.append(extra)
     for source in sources:
         for key in _ENERGY_KEYS:
             rating = _energy_rating_from_value(source.get(key))
@@ -607,13 +622,10 @@ class ApifyListingScraper:
 
                 if criteria.max_energy_rating is not None:
                     if listing.energy_rating is None:
+                        # Sin certificado no se puede garantizar el mínimo: fuera.
                         energy_unknown += 1
-                        self._logger.debug(
-                            "listing_energy_unknown",
-                            portal=portal.value,
-                            listing_url=listing.url,
-                        )
-                    elif ENERGY_RATING_SCALE.index(
+                        continue
+                    if ENERGY_RATING_SCALE.index(
                         listing.energy_rating
                     ) > ENERGY_RATING_SCALE.index(criteria.max_energy_rating):
                         energy_dropped += 1

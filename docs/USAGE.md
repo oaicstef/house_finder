@@ -391,8 +391,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   `"B"` acepta A o B. Es un filtro duro cuando el portal publica la etiqueta
   (`energy_rating` en la respuesta). Para leerla, el scraper activa `fetchDetails` en
   Idealista, que añade una petición por inmueble y hace la ejecución bastante más lenta;
-  sube `APIFY_TIMEOUT_SECONDS` o baja `APIFY_MAX_ITEMS` si usas este filtro. Si la
-  etiqueta no consta, el LLM la busca en la descripción y no la da por cumplida.
+  sube `APIFY_TIMEOUT_SECONDS` o baja `APIFY_MAX_ITEMS` si usas este filtro. Los anuncios
+  sin etiqueta se descartan mientras el filtro esté activo: no se puede garantizar el
+  mínimo. La letra se lee de `energyCertification.energyConsumption.type` (Idealista) o
+  de `energyCertificate` (Fotocasa).
 - **Límites**: `radius_km` entre 1 y 50, CP de 5 dígitos, año entre 1800 y el actual + 1
   y etiqueta energética entre A y G.
 - **Precio y superficie**: en Idealista se ajustan solos a sus escalones (p. ej. 90 m² →

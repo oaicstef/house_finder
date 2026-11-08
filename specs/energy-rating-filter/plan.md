@@ -152,3 +152,27 @@ valor (`ValidationError` → `VALIDATION_ERROR`).
 - [x] 6. Clasificador.
 - [x] 7. UI.
 - [x] 8. Tests y docs.
+
+## Revisión 2026-11-08
+
+La primera búsqueda real con `max_energy_rating = "B"` devolvió anuncios con etiqueta G.
+Un sondeo contra el actor (workflow temporal, 1 inmueble) mostró la forma real del payload:
+
+```json
+"_details": {
+  "energyCertification": {
+    "energyConsumption": {"type": "e", "value": 154},
+    "emissions": {"type": "e", "value": 65}
+  },
+  "moreCharacteristics": {"energyCertificationType": "e"}
+}
+```
+
+| Hallazgo | Corrección |
+|---|---|
+| La letra está en `energyConsumption.type`, no en `rating` | Se añade `type` a las claves anidadas y `energyCertificationType`/`energyPerformance` a los alias; también se mira `_details.moreCharacteristics`. |
+| Los anuncios sin etiqueta se colaban hasta la respuesta | Con el filtro activo se descartan (`energy_unknown`): no se puede garantizar el mínimo. Sin filtro se mantienen. |
+| El prompt pedía buscar en la descripción, que no se envía al LLM | Se elimina esa instrucción; la etiqueta ya viene verificada. |
+
+Validación: el payload real del portal se cubre con un test (`energyConsumption.type: "e"`
+→ `E`), la suite completa queda en verde y se repite una búsqueda en producción.

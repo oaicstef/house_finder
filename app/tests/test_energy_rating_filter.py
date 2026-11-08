@@ -57,6 +57,41 @@ async def test_extracts_rating_from_details_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_extracts_rating_from_the_real_details_shape() -> None:
+    """Idealista publica la letra en ``energyConsumption.type`` ("e")."""
+    item = _item(
+        _details={
+            "energyCertification": {
+                "title": "Energy performance certificate",
+                "emissions": {"type": "e", "value": 65},
+                "energyConsumption": {"type": "e", "value": 154},
+            },
+            "moreCharacteristics": {"energyCertificationType": "e"},
+        }
+    )
+
+    listings = await build_scraper(_FakeClient([item])).fetch_listings(idealista_criteria())
+
+    assert listings[0].energy_rating == "E"
+
+
+@pytest.mark.asyncio
+async def test_does_not_treat_the_certificate_title_as_a_rating() -> None:
+    item = _item(
+        _details={
+            "energyCertification": {
+                "title": "Energy performance certificate",
+                "energyConsumption": {"type": "b"},
+            }
+        }
+    )
+
+    listings = await build_scraper(_FakeClient([item])).fetch_listings(idealista_criteria())
+
+    assert listings[0].energy_rating == "B"
+
+
+@pytest.mark.asyncio
 async def test_normalizes_prefixed_and_lowercase_values() -> None:
     item = _item(energyCertificate="Clase b - 45 kWh/m²")
 
@@ -99,10 +134,17 @@ async def test_drops_listings_worse_than_the_minimum() -> None:
 
 
 @pytest.mark.asyncio
-async def test_keeps_unknown_ratings_for_the_classifier() -> None:
+async def test_drops_unknown_ratings_when_the_filter_is_active() -> None:
     listings = await build_scraper(_FakeClient([_item()])).fetch_listings(
         idealista_criteria(max_energy_rating="B")
     )
+
+    assert listings == []
+
+
+@pytest.mark.asyncio
+async def test_keeps_unknown_ratings_without_the_filter() -> None:
+    listings = await build_scraper(_FakeClient([_item()])).fetch_listings(idealista_criteria())
 
     assert len(listings) == 1
     assert listings[0].energy_rating is None
