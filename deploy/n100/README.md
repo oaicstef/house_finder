@@ -1,5 +1,9 @@
 # Despliegue en el N100 (Docker Compose)
 
+> **Alternativa.** El pipeline despliega en **Kubernetes ARM64** (`deploy/k8s`). Este
+> directorio conserva el despliegue en el N100 para uso manual; `deploy.sh` sigue
+> funcionando pero ningún workflow lo invoca.
+
 Destino por defecto del pipeline: el servidor **N100** (x86_64), ejecutando la imagen
 publicada en GHCR con Docker Compose. Sustituye al despliegue en Kubernetes; los
 manifiestos de [`deploy/k8s`](../k8s/README.md) se mantienen como alternativa.
@@ -12,10 +16,10 @@ deploy/n100/
 └── README.md
 ```
 
-## Cómo despliega el pipeline
+## Cómo desplegar (manual)
 
-`.github/workflows/release.yml` construye la imagen `linux/amd64`, la publica en GHCR con
-el tag `sha-<commit>` y por SSH:
+El workflow ya no despliega en el N100. Para hacerlo a mano, construye/publica la imagen
+`linux/amd64` y ejecuta por SSH:
 
 1. `git fetch && git pull --ff-only` en el checkout del N100 (`N100_DEPLOY_PATH`).
 2. `deploy/n100/deploy.sh sha-<commit>`: `docker compose pull` + `up -d` + espera a healthy.

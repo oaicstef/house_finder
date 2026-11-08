@@ -194,3 +194,17 @@ Criterios de aceptación añadidos:
 - [ ] El job de deploy actualiza el checkout del N100 y deja el contenedor `healthy` (pendiente de `N100_HOST`/`N100_USER`/`N100_SSH_KEY`).
 - [ ] `http://<n100>:<HOST_PORT>/health` responde 200 tras el despliegue.
 - [ ] Un tag `v*` publica además el GitHub Release.
+
+## Revisión 2026-11-07 (vuelta a Kubernetes)
+
+El destino vuelve a ser el **clúster Kubernetes ARM64**:
+
+| Decisión | Cambio |
+|---|---|
+| Imagen | `linux/amd64` → `linux/arm64` (nodo ARM64); se recupera el tag `latest-arm64`. |
+| Job de despliegue | `appleboy/ssh-action` → `azure/k8s-set-context` + `kubectl apply -k deploy/k8s` + `set image sha-<commit>` + `rollout status`. |
+| Secretos | `KUBE_CONFIG`, `REGISTRY_USERNAME` y `REGISTRY_PASSWORD`; los tokens de la app viven en el Secret `house-finder-secrets` del clúster. |
+| N100 | `deploy/n100` se conserva como alternativa manual; el workflow ya no lo usa y los secretos `N100_*` quedan sin uso. |
+
+Validación: `actionlint` limpio, `kubectl kustomize deploy/k8s` renderiza la imagen GHCR,
+suite local en verde; el job de deploy queda pendiente de `KUBE_CONFIG`.

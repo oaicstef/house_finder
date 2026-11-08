@@ -58,27 +58,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # El destino es el N100 (x86_64): se publica solo linux/amd64.
-      # Para volver a desplegar en el clúster ARM64, añade linux/arm64 aquí.
+      # El clúster es ARM64 (nodeSelector kubernetes.io/arch: arm64) y la imagen
+      # base python:3.13-slim es multi-arch, así que se publica solo arm64.
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: |
             ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:latest-arm64
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.ref_tag }}
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.sha_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   # ----------------------------------------------------------------
-  # Deploy al N100 por SSH + docker compose + GitHub Release (tags v*)
+  # Deploy: Kubernetes + GitHub Release (solo en tags v*)
   # ----------------------------------------------------------------
   deploy:
-    name: Release & Deploy (N100)
+    name: Release & Deploy
     runs-on: ubuntu-latest
     needs: [image]
 
@@ -86,40 +87,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # El N100 mantiene un checkout del repo (git pull) y levanta el compose de
-      # deploy/n100 con el tag inmutable sha-<commit>.
-      - name: Deploy to N100 via SSH
-        uses: appleboy/ssh-action@v1
-        env:
-          IMAGE_TAG: ${{ needs.image.outputs.sha_tag }}
-          APP_DIR: ${{ secrets.N100_DEPLOY_PATH }}
-          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+      - name: Set up Kubeconfig
+        uses: azure/k8s-set-context@v4
         with:
-          host: ${{ secrets.N100_HOST }}
-          username: ${{ secrets.N100_USER }}
-          # Autenticación por contraseña (N100_PASSWORD) o por clave (N100_SSH_KEY).
-          password: ${{ secrets.N100_PASSWORD }}
-          key: ${{ secrets.N100_SSH_KEY }}
-          port: ${{ secrets.N100_PORT || 22 }}
-          envs: IMAGE_TAG,APP_DIR,APIFY_TOKEN,DEEPSEEK_API_KEY,REGISTRY_USERNAME,REGISTRY_PASSWORD
-          command_timeout: 15m
-          script: |
-            set -euo pipefail
-            APP_DIR="${APP_DIR:-$HOME/house_finder}"
-            if [ ! -d "$APP_DIR/.git" ]; then
-              echo "No hay checkout del repo en $APP_DIR." >&2
-              echo "Créalo una vez con: git clone https://github.com/oaicstef/house_finder.git $APP_DIR" >&2
-              exit 1
-            fi
-            cd "$APP_DIR"
-            git fetch --prune origin
-            git pull --ff-only
-            cd deploy/n100
-            chmod +x deploy.sh
-            ./deploy.sh "$IMAGE_TAG"
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Ensure namespace and GHCR pull secret exist
+        run: |
+          kubectl create namespace house-finder --dry-run=client -o yaml | kubectl apply -f -
+          if ! kubectl get secret ghcr-login-secret -n house-finder >/dev/null 2>&1; then
+            kubectl create secret docker-registry ghcr-login-secret -n house-finder \
+              --docker-server=ghcr.io \
+              --docker-username="${{ secrets.REGISTRY_USERNAME }}" \
+              --docker-password="${{ secrets.REGISTRY_PASSWORD }}" \
+              --docker-email="docker@github.com"
+          fi
+
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -k deploy/k8s
+
+      # Tag inmutable por commit: el rollout no depende de :latest ni de la caché del nodo.
+      - name: Pin deployment to the built image
+        run: |
+          kubectl -n house-finder set image deployment/house-finder \
+            api=${{ needs.image.outputs.image }}:${{ needs.image.outputs.sha_tag }}
+
+      - name: Wait for rollout to complete
+        run: kubectl -n house-finder rollout status deployment/house-finder --timeout=180s
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
