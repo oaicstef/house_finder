@@ -310,6 +310,15 @@ function buildCard(listing) {
     amenities.append(item);
   }
 
+  const energy = node.querySelector(".card__energy");
+  if (listing.energy_rating) {
+    energy.hidden = false;
+    energy.textContent = listing.energy_rating;
+    energy.classList.add(`energy--${listing.energy_rating}`);
+    energy.title = `Certificado energético ${listing.energy_rating}`;
+    energy.setAttribute("aria-label", `Certificado energético ${listing.energy_rating}`);
+  }
+
   node.querySelector(".card__reason").textContent = listing.reason || "";
   node.querySelector(".card__score").textContent = `Relevancia ${Math.round(
     listing.relevance * 100,

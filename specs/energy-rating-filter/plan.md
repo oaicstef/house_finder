@@ -176,3 +176,12 @@ Un sondeo contra el actor (workflow temporal, 1 inmueble) mostró la forma real 
 
 Validación: el payload real del portal se cubre con un test (`energyConsumption.type: "e"`
 → `E`), la suite completa queda en verde y se repite una búsqueda en producción.
+
+## Revisión 2026-11-09 (etiqueta visible en resultados)
+
+La etiqueta solo se rellenaba cuando el filtro energético estaba activo (era cuando se
+pedían `_details`). Ahora, si el filtro no está activo, el scraper hace una segunda pasada
+con `propertyCodes` **solo para los candidatos que superan los filtros duros** y rellena
+`energy_rating` (y las versiones lingüísticas de la descripción). La tarjeta pinta una
+insignia A-G con color y `title`. Coste medido: 5 detalles ≈ 17 s; con 12 candidatos la
+búsqueda completa pasó de ~33 s a ~82 s.

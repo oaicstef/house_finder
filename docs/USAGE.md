@@ -407,6 +407,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   sin etiqueta se descartan mientras el filtro esté activo: no se puede garantizar el
   mínimo. La letra se lee de `energyCertification.energyConsumption.type` (Idealista) o
   de `energyCertificate` (Fotocasa).
+- **Etiqueta energética en las tarjetas**: cuando la búsqueda no lleva el filtro energético,
+  el scraper pide `_details` (una segunda ejecución del actor) para los candidatos ya
+  filtrados y rellena `energy_rating`; añade ~1 minuto a la búsqueda. Con el filtro
+  energético activo no hace falta: el listado ya trae los detalles.
 - **Distancia**: cada anuncio incluye `distance_km` (km al centroide del CP o a las
   coordenadas indicadas) cuando el portal publica lat/lon. El selector de la UI permite
   ordenar por "Distancia (más cerca primero)"; los anuncios sin coordenadas van al final.

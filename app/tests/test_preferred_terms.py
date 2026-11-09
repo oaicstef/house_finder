@@ -170,12 +170,20 @@ async def test_fetches_details_when_preferred_terms_are_configured() -> None:
 
 
 @pytest.mark.asyncio
-async def test_does_not_fetch_details_without_preferred_terms() -> None:
-    client = _FakeClient([dict(RAW_ITEM)])
+async def test_fetches_details_without_preferred_terms_to_show_energy() -> None:
+    """Sin términos preferentes también se piden detalles: etiqueta energética."""
+    item = dict(RAW_ITEM)
+    item["url"] = "https://www.idealista.com/inmueble/123/"
+    item["propertyCode"] = "123"
+    item["_details"] = {
+        "energyCertification": {"energyConsumption": {"type": "b"}},
+    }
+    client = _FakeClient([item])
 
-    await build_scraper(client).fetch_listings(idealista_criteria())
+    listings = await build_scraper(client).fetch_listings(idealista_criteria())
 
-    assert len(client.calls) == 1
+    assert len(client.calls) == 2
+    assert listings[0].energy_rating == "B"
 
 
 def test_english_paddle_spelling_matches_padel() -> None:

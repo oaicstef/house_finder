@@ -406,6 +406,32 @@ button:disabled {
   padding-top: 6px;
 }
 
+.card__energy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: #fff;
+  background: #64748b;
+}
+
+.card__energy[hidden] {
+  display: none;
+}
+
+.energy--A { background: #0b7a3b; }
+.energy--B { background: #2f9e44; }
+.energy--C { background: #7fae12; }
+.energy--D { background: #d9a400; color: #1f2937; }
+.energy--E { background: #ef8800; }
+.energy--F { background: #e2570c; }
+.energy--G { background: #c92a2a; }
+
 .card__score {
   font-size: 0.76rem;
   font-weight: 700;

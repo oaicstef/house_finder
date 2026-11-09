@@ -116,7 +116,9 @@ async def test_fotocasa_is_skipped_when_home_types_are_set() -> None:
         )
     )
 
-    assert [call["actor_id"] for call in client.calls] == ["actor-idealista"]
+    actor_calls = [call["actor_id"] for call in client.calls]
+    assert actor_calls, "idealista is queried"
+    assert set(actor_calls) == {"actor-idealista"}, "fotocasa is never queried"
 
 
 def test_api_normalizes_alias_and_fingerprint() -> None:

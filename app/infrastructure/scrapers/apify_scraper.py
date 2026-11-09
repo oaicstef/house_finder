@@ -279,6 +279,27 @@ def _home_type(item: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _merged_description(item: Mapping[str, Any]) -> str | None:
+    """Fusiona la descripción del listado con ``_details`` y sus versiones."""
+    texts: list[str] = []
+    primary = _first_value(item, _FIELD_ALIASES["description"])
+    if isinstance(primary, str) and primary.strip():
+        texts.append(primary.strip())
+    details = item.get("_details")
+    if isinstance(details, Mapping):
+        value = details.get("propertyComment")
+        if isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+        comments = details.get("comments")
+        if isinstance(comments, list):
+            for comment in comments:
+                if isinstance(comment, Mapping):
+                    value = comment.get("propertyComment")
+                    if isinstance(value, str) and value.strip():
+                        texts.append(value.strip())
+    return "\n".join(dict.fromkeys(texts)) or None
+
+
 def _energy_rating(item: Mapping[str, Any]) -> str | None:
     """Busca el certificado en el item y, si existe, en ``_details`` (Idealista)."""
     sources: list[Mapping[str, Any]] = [item]
@@ -718,17 +739,11 @@ class ApifyListingScraper:
                 details={"portals": skipped},
             )
 
-        preferred = criteria.preferred_terms
-        if preferred and listings:
-            # Los términos preferentes pueden estar en cualquier versión lingüística
-            # del anuncio (p. ej. "pàdel" en la catalana), que solo llega en
-            # ``_details.comments``. Se piden detalles solo a los candidatos que aún
-            # no mencionan ninguno de los términos, no a todo el listado.
-            missing = [item for item in listings if not item.matches_any(preferred)]
-            if missing:
-                enriched = await self._enrich_descriptions(missing)
-                by_url = {item.url: item for item in enriched}
-                listings = [by_url.get(item.url, item) for item in listings]
+        if listings and criteria.max_energy_rating is None:
+            # Sin filtro energético, el listado no trae ``_details``. Se piden para
+            # los candidatos ya filtrados: de ahí salen la etiqueta energética y las
+            # versiones lingüísticas donde puede aparecer un término preferente.
+            listings = await self._enrich_descriptions(listings)
 
         # Se devuelven TODOS los candidatos (acotados por ``max_items``): recortar aquí
         # a ``max_results`` impediría que los filtros posteriores (must_have) y el
@@ -769,36 +784,24 @@ class ApifyListingScraper:
             )
             return listings
 
-        descriptions: dict[str, str] = {}
+        enriched_by_code: dict[str, Listing] = {}
         for item in items:
             code = str(item.get("propertyCode") or "")
-            details = item.get("_details")
-            if not code or not isinstance(details, Mapping):
+            if code not in codes:
                 continue
-            texts = [details.get("propertyComment")]
-            comments = details.get("comments")
-            if isinstance(comments, list):
-                for comment in comments:
-                    if isinstance(comment, Mapping):
-                        texts.append(comment.get("propertyComment"))
-            merged = "\n".join(
-                dict.fromkeys(
-                    text.strip()
-                    for text in texts
-                    if isinstance(text, str) and text.strip()
-                )
+            enriched_by_code[code] = replace(
+                codes[code],
+                description=_merged_description(item) or codes[code].description,
+                energy_rating=_energy_rating(item) or codes[code].energy_rating,
             )
-            if merged:
-                descriptions[code] = merged
 
         enriched = [
-            replace(listing, description=descriptions.get(code, listing.description))
-            for code, listing in codes.items()
+            enriched_by_code.get(code, listing) for code, listing in codes.items()
         ]
         self._logger.info(
             "listing_details_enriched",
             candidate_count=len(codes),
-            enriched_count=len(descriptions),
+            enriched_count=len(enriched_by_code),
             duration_ms=self._elapsed_ms(started),
         )
         # Mantiene el orden original de la lista.
@@ -1022,7 +1025,7 @@ class ApifyListingScraper:
         if not isinstance(location, str):
             location = _location_text(item)
 
-        description = _first_value(item, _FIELD_ALIASES["description"])
+        description = _merged_description(item)
         latitude, longitude = _coordinates(item)
         photos = _photos(item)
         amenities = _extract_amenities(item) + _url_amenities(url.strip())

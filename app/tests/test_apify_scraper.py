@@ -250,7 +250,8 @@ async def test_reads_dataset_from_v3_run_model() -> None:
 
     await build_scraper(client).fetch_listings(idealista_criteria())
 
-    assert client.dataset_ids == ["ds-1"]
+    # Listado + detalles (la etiqueta energética se lee de ``_details``).
+    assert client.dataset_ids == ["ds-1", "ds-1"]
 
 
 async def test_reads_dataset_from_legacy_dict_run() -> None:
@@ -259,7 +260,7 @@ async def test_reads_dataset_from_legacy_dict_run() -> None:
     listings = await build_scraper(client).fetch_listings(idealista_criteria())
 
     assert len(listings) == 1
-    assert client.dataset_ids == ["ds-legacy"]
+    assert client.dataset_ids == ["ds-legacy", "ds-legacy"]
 
 
 async def test_raises_when_run_status_is_failed() -> None:
