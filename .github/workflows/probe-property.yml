@@ -1,0 +1,72 @@
+name: Probe Idealista search variants
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet 'apify-client>=3,<4'
+      - name: Compare search variants
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from collections import Counter
+          from apify_client import ApifyClient
+
+          TARGET = "111892839"
+          client = ApifyClient(os.environ["APIFY_TOKEN"])
+          BASE = {
+              "operation": "sale",
+              "propertyType": "homes",
+              "country": "es",
+              "maxPrice": "1000000",
+              "minSize": "140",
+          }
+
+          def search(label, extra, max_items):
+              run_input = dict(BASE, maxItems=max_items, **extra)
+              run = client.actor("igolaizola/idealista-scraper").call(run_input=run_input)
+              dataset = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
+              items = list(client.dataset(dataset).iterate_items())
+              codes = [str(item.get("propertyCode")) for item in items]
+              types = Counter(
+                  (
+                      item.get("propertyType"),
+                      (item.get("detailedType") or {}).get("typology"),
+                  )
+                  for item in items
+              )
+              print(f"=== {label} ===")
+              print("input:", json.dumps(run_input, sort_keys=True))
+              print("returned:", len(codes), "| target:", TARGET in codes,
+                    "| index:", codes.index(TARGET) if TARGET in codes else None)
+              print("types:", types.most_common())
+              if TARGET in codes:
+                  item = items[codes.index(TARGET)]
+                  print("target item:", json.dumps({
+                      "price": item.get("price"),
+                      "size": item.get("size"),
+                      "rooms": item.get("rooms"),
+                      "propertyType": item.get("propertyType"),
+                      "detailedType": item.get("detailedType"),
+                      "features": item.get("features"),
+                      "address": item.get("address"),
+                      "neighborhood": item.get("neighborhood"),
+                  }, ensure_ascii=False))
+              print("codes:", ",".join(codes))
+
+          coords = {"latitude": 40.37876642147255, "longitude": -3.602295005978209, "distanceKm": 6}
+          search("A coords maxItems 40", coords, 40)
+          search("B coords maxItems 150", coords, 150)
+          search("C barrio Ensanche de Vallecas", {"location": "Ensanche de Vallecas"}, 40)
+          PY
