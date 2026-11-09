@@ -399,6 +399,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   sin etiqueta se descartan mientras el filtro esté activo: no se puede garantizar el
   mínimo. La letra se lee de `energyCertification.energyConsumption.type` (Idealista) o
   de `energyCertificate` (Fotocasa).
+- **Distancia**: cada anuncio incluye `distance_km` (km al centroide del CP o a las
+  coordenadas indicadas) cuando el portal publica lat/lon. El selector de la UI permite
+  ordenar por "Distancia (más cerca primero)"; los anuncios sin coordenadas van al final.
 - **Límites**: `radius_km` entre 1 y 50, CP de 5 dígitos, año entre 1800 y el actual + 1
   y etiqueta energética entre A y G.
 - **Precio y superficie**: en Idealista se ajustan solos a sus escalones (p. ej. 90 m² →

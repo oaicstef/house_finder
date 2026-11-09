@@ -256,6 +256,10 @@ class SearchResult:
     listings: tuple[ScoredListing, ...]
     scraped_count: int
     discarded_count: int
+    #: Origen geográfico resuelto (CP -> coordenadas) para calcular distancias.
+    #: No forma parte de los criterios ni de la huella de idempotencia.
+    origin_latitude: float | None = None
+    origin_longitude: float | None = None
 
     @property
     def matched_count(self) -> int:

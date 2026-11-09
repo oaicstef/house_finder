@@ -83,7 +83,8 @@ class SearchService:
         )
 
         try:
-            fetched = await self._fetch(criteria, search_id, started)
+            resolved = await self._resolve_geo(criteria, search_id)
+            fetched = await self._fetch(resolved, search_id, started)
             listings = self._apply_requirements(fetched, criteria, search_id)
             scored = await self._classify(criteria, listings, search_id)
 
@@ -97,6 +98,8 @@ class SearchService:
                 listings=tuple(scored),
                 scraped_count=len(fetched),
                 discarded_count=max(len(fetched) - len(scored), 0),
+                origin_latitude=resolved.latitude,
+                origin_longitude=resolved.longitude,
             )
 
             await self._repository.save(result)
@@ -161,9 +164,8 @@ class SearchService:
         search_id: UUID,
         started: float,
     ) -> list[Listing]:
-        resolved = await self._resolve_geo(criteria, search_id)
         try:
-            listings = await self._scraper.fetch_listings(resolved)
+            listings = await self._scraper.fetch_listings(criteria)
         except ScraperException as exc:
             self._logger.warning(
                 "search_scraper_failed",

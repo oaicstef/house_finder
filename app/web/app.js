@@ -198,6 +198,12 @@ function sortListings(listingList, mode) {
       return sorted.sort((a, b) => (b.size_m2 ?? 0) - (a.size_m2 ?? 0));
     case "year-desc":
       return sorted.sort((a, b) => (b.year_built ?? 0) - (a.year_built ?? 0));
+    case "distance":
+      return sorted.sort((a, b) => {
+        const da = a.distance_km ?? Number.POSITIVE_INFINITY;
+        const db = b.distance_km ?? Number.POSITIVE_INFINITY;
+        return da - db || b.relevance - a.relevance;
+      });
     default:
       return sorted.sort(
         (a, b) => byMatches(a, b) || b.relevance - a.relevance || byPrice(a, b),
@@ -241,6 +247,9 @@ function buildCard(listing) {
 
   const facts = node.querySelector(".card__facts");
   const factsData = [
+    listing.distance_km !== null && listing.distance_km !== undefined
+      ? number(listing.distance_km, " km")
+      : null,
     listing.size_m2 ? `${number(listing.size_m2, " m²")}` : null,
     listing.rooms !== null ? `${listing.rooms} hab.` : null,
     listing.bathrooms !== null ? `${listing.bathrooms} baño(s)` : null,

@@ -241,8 +241,9 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   si un portal se queda a cero, lo verás ahí en lugar de recibir resultados parciales
   silenciosos.
 - `postal_code` + `radius_km` busca en un radio alrededor del CP (CartoCiudad),
-  `min_year_built` exige un año de construcción mínimo y `max_energy_rating` exige un
-  certificado energético mínimo (`"B"` = A o B).
+  `min_year_built` exige un año de construcción mínimo, `max_energy_rating` exige un
+  certificado energético mínimo (`"B"` = A o B) y `distance_km` (en cada anuncio) permite
+  ordenar por cercanía desde la UI.
 
 Errores uniformes:
 

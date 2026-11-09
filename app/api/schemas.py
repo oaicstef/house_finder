@@ -12,7 +12,13 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.domain.models import Portal, ScoredListing, SearchCriteria, SearchResult
+from app.domain.models import (
+    Coordinates,
+    Portal,
+    ScoredListing,
+    SearchCriteria,
+    SearchResult,
+)
 
 __all__ = [
     "ErrorDetail",
@@ -233,6 +239,13 @@ class ListingResponse(BaseModel):
         default_factory=list,
         description="Términos preferentes presentes en el anuncio (criterio no excluyente).",
     )
+    distance_km: float | None = Field(
+        default=None,
+        description=(
+            "Distancia en km al origen de la búsqueda (CP o lat/lon). Null si la búsqueda "
+            "no tiene origen o el anuncio no publica coordenadas."
+        ),
+    )
     relevance: float
     reason: str
 
@@ -241,8 +254,19 @@ class ListingResponse(BaseModel):
         cls,
         scored: ScoredListing,
         preferred_terms: tuple[str, ...] = (),
+        origin: Coordinates | None = None,
     ) -> "ListingResponse":
         listing = scored.listing
+        distance_km: float | None = None
+        if (
+            origin is not None
+            and listing.latitude is not None
+            and listing.longitude is not None
+        ):
+            distance_km = round(
+                origin.distance_km_to(Coordinates(listing.latitude, listing.longitude)),
+                2,
+            )
         return cls(
             portal=listing.portal.value,
             url=listing.url,
@@ -258,6 +282,7 @@ class ListingResponse(BaseModel):
             photos=list(listing.photos),
             amenities=list(listing.amenities),
             matched_terms=list(listing.matches_any(preferred_terms)),
+            distance_km=distance_km,
             relevance=scored.relevance,
             reason=scored.reason,
         )
@@ -297,6 +322,9 @@ class SearchResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, result: SearchResult) -> "SearchResponse":
+        origin = None
+        if result.origin_latitude is not None and result.origin_longitude is not None:
+            origin = Coordinates(result.origin_latitude, result.origin_longitude)
         return cls(
             search_id=result.search_id,
             criteria_fingerprint=result.criteria_fingerprint,
@@ -312,7 +340,11 @@ class SearchResponse(BaseModel):
             ],
             warnings=list(result.warnings),
             listings=[
-                ListingResponse.from_domain(item, result.criteria.preferred_terms)
+                ListingResponse.from_domain(
+                    item,
+                    result.criteria.preferred_terms,
+                    origin,
+                )
                 for item in result.listings
             ],
         )

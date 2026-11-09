@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <title>Buscador inmobiliario</title>
-    <link rel="stylesheet" href="/static/styles.css?v=3" />
+    <link rel="stylesheet" href="/static/styles.css?v=4" />
   </head>
   <body>
     <header class="topbar">
@@ -22,6 +22,7 @@
             Ordenar
             <select id="sort-select">
               <option value="relevance">Relevancia (destacados primero)</option>
+              <option value="distance">Distancia (más cerca primero)</option>
               <option value="price-asc">Precio: menor a mayor</option>
               <option value="price-desc">Precio: mayor a menor</option>
               <option value="size-desc">Superficie: mayor a menor</option>
@@ -140,6 +141,6 @@
       </template>
     </main>
 
-    <script src="/static/app.js?v=3" defer></script>
+    <script src="/static/app.js?v=4" defer></script>
   </body>
 </html>

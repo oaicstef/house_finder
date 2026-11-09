@@ -182,6 +182,10 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
         "scraped_count": result.scraped_count,
         "discarded_count": result.discarded_count,
         "matched_count": result.matched_count,
+        "origin": {
+            "latitude": result.origin_latitude,
+            "longitude": result.origin_longitude,
+        },
         "criteria": {
             "location": criteria.location,
             "portals": [portal.value for portal in criteria.portals],
@@ -269,6 +273,7 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
     created_at = datetime.fromisoformat(payload["created_at"])
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    origin = payload.get("origin") or {}
 
     return SearchResult(
         search_id=UUID(payload["search_id"]),
@@ -280,4 +285,6 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
         listings=listings,
         scraped_count=int(payload.get("scraped_count", len(listings))),
         discarded_count=int(payload.get("discarded_count", 0)),
+        origin_latitude=origin.get("latitude"),
+        origin_longitude=origin.get("longitude"),
     )

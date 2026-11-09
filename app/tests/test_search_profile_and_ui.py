@@ -317,9 +317,12 @@ def test_ui_index_and_static_assets_are_served(make_container: Any) -> None:
     assert 'id="criteria-form"' in index.text
     assert 'id="save-criteria"' in index.text
     assert 'id="reset-criteria"' in index.text
-    assert "/static/app.js?v=3" in index.text
+    assert "/static/app.js?v=4" in index.text
     # La UI móvil: viewport con safe-area y barra de acciones fija en CSS.
     assert "viewport-fit=cover" in index.text
+    # Orden por distancia disponible para el usuario final.
+    assert '<option value="distance">' in index.text
+    assert "distance_km" in script.text
     assert "env(safe-area-inset-bottom)" in styles.text
     assert script.status_code == 200
     assert "search-profile/run" in script.text
