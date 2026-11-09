@@ -1,0 +1,59 @@
+name: Probe padel term in the listing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet 'apify-client>=3,<4'
+      - name: Inspect descriptions
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os, re, unicodedata
+          from apify_client import ApifyClient
+
+          TARGET = "111892839"
+          client = ApifyClient(os.environ["APIFY_TOKEN"])
+
+          def norm(text):
+              text = unicodedata.normalize("NFD", str(text or ""))
+              text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+              return text.lower()
+
+          run = client.actor("igolaizola/idealista-scraper").call(run_input={
+              "propertyCodes": [TARGET], "country": "es",
+              "operation": "sale", "propertyType": "homes",
+          })
+          ds = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
+          item = list(client.dataset(ds).iterate_items())[0]
+          details = item.get("_details") or {}
+          full = details.get("propertyComment") or ""
+          print("DETAILS comment length:", len(full), "| padel:", "padel" in norm(full),
+                "| pos:", norm(full).find("padel"))
+
+          run = client.actor("igolaizola/idealista-scraper").call(run_input={
+              "operation": "sale", "propertyType": "homes", "country": "es",
+              "latitude": 40.37876642147255, "longitude": -3.602295005978209,
+              "distanceKm": 6, "maxItems": 100, "maxPrice": "1000000",
+              "minSize": "140", "homeType": ["terracedHouse", "semiDetachedHouse", "detachedHouse"],
+          })
+          ds = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
+          items = list(client.dataset(ds).iterate_items())
+          target = next(i for i in items if str(i.get("propertyCode")) == TARGET)
+          desc = target.get("description") or ""
+          print("SEARCH description length:", len(desc), "| padel:", "padel" in norm(desc),
+                "| piscina:", "piscina" in norm(desc))
+          print("SEARCH description tail:", repr(desc[-160:]))
+          print("has description in item:", "description" in target)
+          print("details present:", "_details" in target)
+          PY
