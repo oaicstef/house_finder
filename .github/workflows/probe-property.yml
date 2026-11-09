@@ -37,6 +37,12 @@ jobs:
               more = details.get("moreCharacteristics") or {}
               desc = item.get("description") or details.get("propertyComment") or ""
               keep = {
+                  "detailWebLink": details.get("detailWebLink"),
+                  "detail_price": details.get("price"),
+                  "priceInfo": details.get("priceInfo"),
+                  "ubication": details.get("ubication"),
+                  "detail_keys": sorted(details.keys()),
+                  "top_keys": sorted(item.keys()),
                   "url": item.get("url"),
                   "price": item.get("price"),
                   "size": item.get("size"),
