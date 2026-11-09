@@ -87,7 +87,40 @@ class DeepSeekListingClassifier:
             return []
 
         client = self._client or self._build_client()
-        payload = {
+        response = await self._request_assessments(
+            client, self._build_payload(criteria, listings)
+        )
+        assessments = self._parse_assessments(response, listings)
+
+        # El modelo a veces omite anuncios del lote. Se reintenta una vez solo con
+        # los que faltan, en lugar de descartarlos en silencio.
+        assessed = {assessment.listing_url for assessment in assessments}
+        missing = [listing for listing in listings if listing.url not in assessed]
+        if missing:
+            self._logger.warning(
+                "classifier_missing_assessments",
+                listing_count=len(missing),
+                batch_size=len(listings),
+            )
+            try:
+                retry = await self._request_assessments(
+                    client, self._build_payload(criteria, missing)
+                )
+                assessments.extend(self._parse_assessments(retry, missing))
+            except ClassifierException as exc:
+                self._logger.warning(
+                    "classifier_retry_failed",
+                    error_code=exc.code,
+                    listing_count=len(missing),
+                )
+        return assessments
+
+    def _build_payload(
+        self,
+        criteria: SearchCriteria,
+        listings: Sequence[Listing],
+    ) -> dict[str, Any]:
+        return {
             "criteria": {
                 "location": criteria.location,
                 "min_price_eur": criteria.min_price_eur,
@@ -96,6 +129,8 @@ class DeepSeekListingClassifier:
                 "min_rooms": criteria.min_rooms,
                 "preferences": criteria.preferences,
                 "must_have": list(criteria.must_have),
+                "preferred_terms": list(criteria.preferred_terms),
+                "home_types": list(criteria.home_types),
                 "postal_code": criteria.postal_code,
                 "radius_km": criteria.radius_km,
                 "min_year_built": criteria.min_year_built,
@@ -123,9 +158,6 @@ class DeepSeekListingClassifier:
                 for listing in listings
             ],
         }
-
-        response = await self._request_assessments(client, payload)
-        return self._parse_assessments(response, listings)
 
     async def _request_assessments(self, client: Any, payload: dict[str, Any]) -> str:
         try:

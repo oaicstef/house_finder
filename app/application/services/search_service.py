@@ -98,6 +98,7 @@ class SearchService:
                 listings=tuple(scored),
                 scraped_count=len(fetched),
                 discarded_count=max(len(fetched) - len(scored), 0),
+                requirements_dropped=max(len(fetched) - len(listings), 0),
                 origin_latitude=resolved.latitude,
                 origin_longitude=resolved.longitude,
             )

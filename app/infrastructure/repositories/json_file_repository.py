@@ -181,6 +181,7 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
         "trigger": result.trigger.value,
         "scraped_count": result.scraped_count,
         "discarded_count": result.discarded_count,
+        "requirements_dropped": result.requirements_dropped,
         "matched_count": result.matched_count,
         "origin": {
             "latitude": result.origin_latitude,
@@ -294,6 +295,7 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
         listings=listings,
         scraped_count=int(payload.get("scraped_count", len(listings))),
         discarded_count=int(payload.get("discarded_count", 0)),
+        requirements_dropped=int(payload.get("requirements_dropped", 0)),
         origin_latitude=origin.get("latitude"),
         origin_longitude=origin.get("longitude"),
     )

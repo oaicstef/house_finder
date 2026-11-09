@@ -345,6 +345,8 @@ function renderSummary(result) {
     ["Encontrados", result.matched_count],
     ["Analizados", result.scraped_count],
     ["Descartados", result.discarded_count],
+    ["Sin requisitos", result.requirements_dropped ?? 0],
+    ["Baja relevancia", result.classifier_dropped ?? 0],
     ["Búsqueda", result.search_id],
   ];
   for (const [label, value] of parts) {

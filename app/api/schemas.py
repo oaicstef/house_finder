@@ -345,6 +345,12 @@ class SearchResponse(BaseModel):
     scraped_count: int
     matched_count: int
     discarded_count: int
+    requirements_dropped: int = Field(
+        default=0, description="Descartados por requisitos obligatorios (must_have)."
+    )
+    classifier_dropped: int = Field(
+        default=0, description="Descartados por relevancia del clasificador."
+    )
     portals: list[PortalOutcomeResponse] = Field(
         default_factory=list,
         description=(
@@ -372,6 +378,10 @@ class SearchResponse(BaseModel):
             scraped_count=result.scraped_count,
             matched_count=result.matched_count,
             discarded_count=result.discarded_count,
+            requirements_dropped=result.requirements_dropped,
+            classifier_dropped=max(
+                result.discarded_count - result.requirements_dropped, 0
+            ),
             portals=[
                 PortalOutcomeResponse(portal=outcome.portal.value, matched=outcome.matched)
                 for outcome in result.portal_outcomes

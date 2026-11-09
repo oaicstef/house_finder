@@ -317,7 +317,7 @@ def test_ui_index_and_static_assets_are_served(make_container: Any) -> None:
     assert 'id="criteria-form"' in index.text
     assert 'id="save-criteria"' in index.text
     assert 'id="reset-criteria"' in index.text
-    assert "/static/app.js?v=6" in index.text
+    assert "/static/app.js?v=7" in index.text
     # La UI móvil: viewport con safe-area y barra de acciones fija en CSS.
     assert "viewport-fit=cover" in index.text
     # Orden por distancia disponible para el usuario final.

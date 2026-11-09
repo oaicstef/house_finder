@@ -15,8 +15,14 @@ from app.tests.conftest import RecordingLogger, make_listing
 
 
 class _FakeCompletions:
-    def __init__(self, content: str | None, error: Exception | None) -> None:
+    def __init__(
+        self,
+        content: str | None,
+        error: Exception | None,
+        contents: list[str] | None = None,
+    ) -> None:
         self._content = content
+        self._contents = list(contents or [])
         self._error = error
         self.requests: list[dict[str, Any]] = []
 
@@ -24,14 +30,20 @@ class _FakeCompletions:
         self.requests.append(kwargs)
         if self._error is not None:
             raise self._error
+        content = self._contents.pop(0) if self._contents else self._content
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=self._content))]
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
         )
 
 
 class _FakeLLMClient:
-    def __init__(self, content: str | None = None, error: Exception | None = None) -> None:
-        self.completions = _FakeCompletions(content, error)
+    def __init__(
+        self,
+        content: str | None = None,
+        error: Exception | None = None,
+        contents: list[str] | None = None,
+    ) -> None:
+        self.completions = _FakeCompletions(content, error, contents)
         self.chat = SimpleNamespace(completions=self.completions)
 
 
@@ -206,3 +218,20 @@ async def test_raises_classifier_exception_on_empty_content() -> None:
 
     with pytest.raises(ClassifierException):
         await build_classifier(client).assess_listings(CRITERIA, [make_listing()])
+
+
+async def test_retries_missing_listings_instead_of_dropping_them() -> None:
+    first = make_listing("https://www.idealista.com/inmueble/1/")
+    second = make_listing("https://www.idealista.com/inmueble/2/")
+    client = _FakeLLMClient(
+        contents=[
+            json.dumps({"assessments": [{"listing_url": first.url, "relevance": 0.9}]}),
+            json.dumps({"assessments": [{"listing_url": second.url, "relevance": 0.8}]}),
+        ]
+    )
+
+    assessments = await build_classifier(client).assess_listings(CRITERIA, [first, second])
+
+    assert {item.listing_url for item in assessments} == {first.url, second.url}
+    retry_payload = json.loads(client.completions.requests[1]["messages"][1]["content"])
+    assert [item["listing_url"] for item in retry_payload["listings"]] == [second.url]

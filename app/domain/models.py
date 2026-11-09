@@ -348,6 +348,8 @@ class SearchResult:
     listings: tuple[ScoredListing, ...]
     scraped_count: int
     discarded_count: int
+    #: Anuncios descartados por requisitos obligatorios (``must_have``).
+    requirements_dropped: int = 0
     #: Origen geográfico resuelto (CP -> coordenadas) para calcular distancias.
     #: No forma parte de los criterios ni de la huella de idempotencia.
     origin_latitude: float | None = None
