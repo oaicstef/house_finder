@@ -140,15 +140,21 @@ async def test_postal_code_origin_is_recorded_without_touching_the_criteria() ->
 
 
 @pytest.mark.asyncio
-async def test_json_repository_round_trips_the_origin(tmp_path) -> None:
+async def test_json_repository_round_trips_the_origin_and_coordinates(tmp_path) -> None:
+    listing = _listing_with_coordinates(*NEARBY)
     repository = JsonFileListingRepository(tmp_path, logger=RecordingLogger())
-    result = _result()
+    result = _result((_scored(listing),))
     await repository.save(result)
 
     restored = await repository.get_by_id(result.search_id)
 
     assert restored is not None
     assert (restored.origin_latitude, restored.origin_longitude) == ORIGIN
+    restored_listing = restored.listings[0].listing
+    assert (restored_listing.latitude, restored_listing.longitude) == NEARBY
+    # La distancia se puede recalcular al releer la búsqueda guardada.
+    distance = SearchResponse.from_domain(restored).listings[0].distance_km
+    assert distance is not None and 3.5 < distance < 5.0
 
 
 @pytest.mark.asyncio

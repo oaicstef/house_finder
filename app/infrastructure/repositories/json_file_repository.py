@@ -216,6 +216,9 @@ def _serialize_result(result: SearchResult) -> dict[str, Any]:
                 "location": scored.listing.location,
                 "year_built": scored.listing.year_built,
                 "energy_rating": scored.listing.energy_rating,
+                # Necesarias para calcular distance_km al releer el resultado.
+                "latitude": scored.listing.latitude,
+                "longitude": scored.listing.longitude,
                 "photos": list(scored.listing.photos),
                 "description": scored.listing.description,
                 "amenities": list(scored.listing.amenities),
@@ -263,6 +266,8 @@ def _deserialize_result(payload: dict[str, Any]) -> SearchResult:
                 amenities=tuple(item.get("amenities") or ()),
                 year_built=item.get("year_built"),
                 energy_rating=item.get("energy_rating"),
+                latitude=item.get("latitude"),
+                longitude=item.get("longitude"),
                 photos=tuple(item.get("photos") or ()),
             ),
             relevance=float(item["relevance"]),
