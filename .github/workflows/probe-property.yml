@@ -1,4 +1,4 @@
-name: Probe padel anywhere in the listing payload
+name: Probe comments and detail cost
 
 on:
   workflow_dispatch:
@@ -14,49 +14,36 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install --quiet 'apify-client>=3,<4'
-      - name: Recursive scan
+      - name: Comments and timing
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: |
           python - <<'PY'
-          import json, os, re, unicodedata
+          import os, time
           from apify_client import ApifyClient
 
           TARGET = "111892839"
+          CODES = [TARGET, "113025882", "113004737", "113023897", "113019740"]
           client = ApifyClient(os.environ["APIFY_TOKEN"])
 
-          def norm(text):
-              text = unicodedata.normalize("NFD", str(text))
-              return "".join(c for c in text if unicodedata.category(c) != "Mn").lower()
-
+          started = time.time()
           run = client.actor("igolaizola/idealista-scraper").call(run_input={
-              "propertyCodes": [TARGET], "country": "es",
+              "propertyCodes": CODES, "country": "es",
               "operation": "sale", "propertyType": "homes",
           })
+          elapsed = time.time() - started
           ds = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
-          item = list(client.dataset(ds).iterate_items())[0]
+          items = list(client.dataset(ds).iterate_items())
+          print("codes:", len(CODES), "| items:", len(items), "| seconds:", round(elapsed, 1))
 
-          hits = []
-          def walk(node, path=""):
-              if isinstance(node, dict):
-                  for key, value in node.items():
-                      walk(value, f"{path}.{key}" if path else key)
-              elif isinstance(node, list):
-                  for index, value in enumerate(node):
-                      walk(value, f"{path}[{index}]")
-              elif isinstance(node, str):
-                  if "padel" in norm(node):
-                      hits.append((path, node[:300]))
-
-          walk(item)
-          print("padel hits:", len(hits))
-          for path, text in hits[:10]:
-              print(" -", path, "=>", text)
-
-          details = item.get("_details") or {}
-          more = details.get("moreCharacteristics") or {}
-          print("moreCharacteristics:", json.dumps(more, ensure_ascii=False))
-          print("features:", json.dumps(item.get("features"), ensure_ascii=False))
-          print("description chars:", len(details.get("propertyComment") or ""))
-          print("description head:", (details.get("propertyComment") or "")[:300])
+          target = next(i for i in items if str(i.get("propertyCode")) == TARGET)
+          details = target.get("_details") or {}
+          comments = details.get("comments") or []
+          total = len(details.get("propertyComment") or "")
+          print("comments:", len(comments))
+          for index, comment in enumerate(comments):
+              text = (comment or {}).get("propertyComment") or ""
+              total += len(text)
+              print(f"  [{index}] len={len(text)} padel={'padel' in text.lower() or 'pádel' in text.lower()}")
+          print("total description chars:", total)
           PY
