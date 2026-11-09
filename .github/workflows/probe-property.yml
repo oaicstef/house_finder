@@ -1,4 +1,4 @@
-name: Probe one Idealista property
+name: Probe Idealista search for one property
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install --quiet 'apify-client>=3,<4'
-      - name: Fetch and dump the property
+      - name: Run the same search the app runs
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: |
@@ -22,45 +22,46 @@ jobs:
           import json, os
           from apify_client import ApifyClient
 
+          TARGET = "111892839"
           client = ApifyClient(os.environ["APIFY_TOKEN"])
-          run = client.actor("igolaizola/idealista-scraper").call(run_input={
-              "propertyCodes": ["111892839"],
-              "country": "es",
+          run_input = {
               "operation": "sale",
               "propertyType": "homes",
-          })
+              "country": "es",
+              "latitude": 40.37876642147255,
+              "longitude": -3.602295005978209,
+              "distanceKm": 6,
+              "maxItems": 40,
+              "minSize": "140",
+              "maxPrice": "1000000",
+          }
+          run = client.actor("igolaizola/idealista-scraper").call(run_input=run_input)
           dataset = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
           items = list(client.dataset(dataset).iterate_items())
-          print("items:", len(items))
+          codes = [str(i.get("propertyCode")) for i in items]
+          print("run_input:", json.dumps(run_input, sort_keys=True))
+          print("returned:", len(codes))
+          print("target_in_results:", TARGET in codes)
+          print("codes:", ",".join(codes))
           for item in items:
-              details = item.get("_details") or {}
-              more = details.get("moreCharacteristics") or {}
-              desc = item.get("description") or details.get("propertyComment") or ""
+              if str(item.get("propertyCode")) != TARGET:
+                  continue
               keep = {
-                  "detailWebLink": details.get("detailWebLink"),
-                  "detail_price": details.get("price"),
-                  "priceInfo": details.get("priceInfo"),
-                  "ubication": details.get("ubication"),
-                  "detail_keys": sorted(details.keys()),
-                  "top_keys": sorted(item.keys()),
-                  "url": item.get("url"),
                   "price": item.get("price"),
                   "size": item.get("size"),
                   "rooms": item.get("rooms"),
                   "bathrooms": item.get("bathrooms"),
-                  "propertyType": item.get("propertyType"),
+                  "latitude": item.get("latitude"),
+                  "longitude": item.get("longitude"),
                   "address": item.get("address"),
                   "municipality": item.get("municipality"),
                   "district": item.get("district"),
                   "neighborhood": item.get("neighborhood"),
-                  "latitude": item.get("latitude"),
-                  "longitude": item.get("longitude"),
-                  "hasLift": item.get("hasLift"),
                   "features": item.get("features"),
-                  "energyCertification": details.get("energyCertification"),
-                  "moreCharacteristics": more,
-                  "description_has_piscina": "piscina" in desc.lower(),
-                  "description": desc[:600],
+                  "hasLift": item.get("hasLift"),
+                  "url": item.get("url"),
+                  "description_has_piscina": "piscina" in (item.get("description") or "").lower(),
+                  "description": (item.get("description") or "")[:500],
               }
-              print(json.dumps(keep, ensure_ascii=False, indent=1))
+              print("TARGET:", json.dumps(keep, ensure_ascii=False, indent=1))
           PY
