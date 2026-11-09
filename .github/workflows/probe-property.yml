@@ -1,0 +1,60 @@
+name: Probe one Idealista property
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install --quiet 'apify-client>=3,<4'
+      - name: Fetch and dump the property
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from apify_client import ApifyClient
+
+          client = ApifyClient(os.environ["APIFY_TOKEN"])
+          run = client.actor("igolaizola/idealista-scraper").call(run_input={
+              "propertyCodes": ["111892839"],
+              "country": "es",
+              "operation": "sale",
+              "propertyType": "homes",
+          })
+          dataset = getattr(run, "default_dataset_id", None) or run["defaultDatasetId"]
+          items = list(client.dataset(dataset).iterate_items())
+          print("items:", len(items))
+          for item in items:
+              details = item.get("_details") or {}
+              more = details.get("moreCharacteristics") or {}
+              desc = item.get("description") or details.get("propertyComment") or ""
+              keep = {
+                  "url": item.get("url"),
+                  "price": item.get("price"),
+                  "size": item.get("size"),
+                  "rooms": item.get("rooms"),
+                  "bathrooms": item.get("bathrooms"),
+                  "propertyType": item.get("propertyType"),
+                  "address": item.get("address"),
+                  "municipality": item.get("municipality"),
+                  "district": item.get("district"),
+                  "neighborhood": item.get("neighborhood"),
+                  "latitude": item.get("latitude"),
+                  "longitude": item.get("longitude"),
+                  "hasLift": item.get("hasLift"),
+                  "features": item.get("features"),
+                  "energyCertification": details.get("energyCertification"),
+                  "moreCharacteristics": more,
+                  "description_has_piscina": "piscina" in desc.lower(),
+                  "description": desc[:600],
+              }
+              print(json.dumps(keep, ensure_ascii=False, indent=1))
+          PY
