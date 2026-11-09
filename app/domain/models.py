@@ -132,6 +132,12 @@ HOME_TYPE_ALIASES: dict[str, str] = {
     "loft": "loft",
 }
 
+#: Variantes de un término que deben contar como el mismo (texto ya normalizado).
+#: "paddle" es la grafía inglesa que usan algunos anuncios.
+PREFERRED_TERM_ALIASES: dict[str, tuple[str, ...]] = {
+    "padel": ("paddle", "pista de padel", "pistas de padel"),
+}
+
 #: Escala de certificado energético, de mejor (A) a peor (G).
 ENERGY_RATING_SCALE: tuple[str, ...] = ("A", "B", "C", "D", "E", "F", "G")
 
@@ -227,15 +233,20 @@ class Listing:
         )
         return normalize_text(f"{self.title} {self.description or ''} {labels}")
 
+    def _contains_term(self, term: str, haystack: str) -> bool:
+        key = normalize_text(term)
+        variants = (key, *PREFERRED_TERM_ALIASES.get(key, ()))
+        return any(variant in haystack for variant in variants)
+
     def satisfies_all(self, terms: Sequence[str]) -> bool:
         """¿Cumple *todos* los requisitos exigidos? (semántica AND)."""
         haystack = self.searchable_text
-        return all(normalize_text(term) in haystack for term in terms)
+        return all(self._contains_term(term, haystack) for term in terms)
 
     def matches_any(self, terms: Sequence[str]) -> tuple[str, ...]:
         """Términos preferentes presentes en el anuncio (ninguno = tupla vacía)."""
         haystack = self.searchable_text
-        return tuple(term for term in terms if normalize_text(term) in haystack)
+        return tuple(term for term in terms if self._contains_term(term, haystack))
 
 
 @dataclass(frozen=True, slots=True)

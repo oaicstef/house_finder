@@ -178,6 +178,13 @@ async def test_does_not_fetch_details_without_preferred_terms() -> None:
     assert len(client.calls) == 1
 
 
+def test_english_paddle_spelling_matches_padel() -> None:
+    listing = make_listing(description="Chalet with a private paddle court and pool")
+
+    assert listing.matches_any(("padel",)) == ("padel",)
+    assert listing.satisfies_all(("padel",))
+
+
 def test_catalan_accents_are_normalized() -> None:
     from app.domain.models import normalize_text
 
