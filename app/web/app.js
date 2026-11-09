@@ -39,6 +39,29 @@ const FIELD_IDS = {
 
 const PORTAL_IDS = { idealista: "f-idealista", fotocasa: "f-fotocasa" };
 
+const HOME_TYPE_IDS = {
+  flat: "f-type-flat",
+  penthouse: "f-type-penthouse",
+  duplex: "f-type-duplex",
+  terracedHouse: "f-type-terraced",
+  semiDetachedHouse: "f-type-semi",
+  detachedHouse: "f-type-detached",
+  villa: "f-type-villa",
+};
+
+const HOME_TYPE_LABEL = {
+  flat: "Piso",
+  penthouse: "Ático",
+  duplex: "Dúplex",
+  terracedHouse: "Adosado",
+  semiDetachedHouse: "Pareado",
+  detachedHouse: "Independiente",
+  villa: "Villa",
+  countryHouse: "Casa de campo",
+  apartment: "Apartamento",
+  loft: "Loft",
+};
+
 const SOURCE_LABEL = {
   override: "Perfil guardado desde la UI",
   profile: "Perfil preconfigurado (SEARCH_PROFILE_JSON)",
@@ -89,6 +112,11 @@ function renderCriteria(profile) {
     ["Eficiencia mín.", profile.max_energy_rating ?? "—"],
     ["Obligatorio", (profile.must_have || []).join(", ") || "—"],
     ["Destacado", (profile.preferred_terms || []).join(", ") || "—"],
+    [
+      "Tipo",
+      (profile.home_types || []).map((type) => HOME_TYPE_LABEL[type] || type).join(", ") ||
+        "Todos",
+    ],
     ["Resultados", profile.max_results ?? "—"],
   ];
   for (const [label, value] of entries) {
@@ -117,6 +145,11 @@ function fillForm(profile) {
   const selected = new Set(profile.portals || []);
   for (const [portal, id] of Object.entries(PORTAL_IDS)) {
     document.getElementById(id).checked = selected.has(portal);
+  }
+
+  const homeTypes = new Set(profile.home_types || []);
+  for (const [type, id] of Object.entries(HOME_TYPE_IDS)) {
+    document.getElementById(id).checked = homeTypes.has(type);
   }
 }
 
@@ -166,6 +199,9 @@ function readForm() {
       .value.split(",")
       .map((term) => term.trim())
       .filter(Boolean),
+    home_types: Object.entries(HOME_TYPE_IDS)
+      .filter(([, id]) => document.getElementById(id).checked)
+      .map(([type]) => type),
     preferences: preferences || null,
   };
 }

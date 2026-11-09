@@ -19,6 +19,8 @@ from app.domain.exceptions import ScraperException
 from app.domain.models import (
     AMENITY_LABELS,
     ENERGY_RATING_SCALE,
+    HOME_TYPES,
+    parse_home_type,
     Coordinates,
     Listing,
     Portal,
@@ -118,6 +120,8 @@ class _PortalProfile:
     location_transform: Callable[[str], str] | None = None
     #: El actor admite ``fetchDetails`` (necesario para leer el certificado energético).
     supports_fetch_details: bool = False
+    #: El actor admite ``homeType`` (filtro por subtipo de vivienda).
+    supports_home_type: bool = False
 
 
 #: Escalones del esquema de ``igolaizola/idealista-scraper`` (precio en euros).
@@ -219,6 +223,7 @@ _PROFILES: dict[Portal, _PortalProfile] = {
         size_steps=_IDEALISTA_SIZE_STEPS,
         location_transform=_idealista_location,
         supports_fetch_details=True,
+        supports_home_type=True,
     ),
     Portal.FOTOCASA: _PortalProfile(
         # Verificado en vivo contra igolaizola/fotocasa-scraper (build zQ6P2E7A5hwEubfcJ).
@@ -254,6 +259,23 @@ def _energy_rating_from_value(value: Any) -> str | None:
             rating = _energy_rating_from_value(value.get(key))
             if rating:
                 return rating
+    return None
+
+
+def _home_type(item: Mapping[str, Any]) -> str | None:
+    """Tipo de vivienda canónico a partir del subtipo del portal."""
+    detailed = item.get("detailedType")
+    if isinstance(detailed, Mapping):
+        for key in ("subTypology", "typology"):
+            value = detailed.get(key)
+            parsed = parse_home_type(value) if isinstance(value, str) else None
+            if parsed:
+                return parsed
+    for key in ("propertySubtype", "propertyType", "homeType"):
+        value = item.get(key)
+        parsed = parse_home_type(value) if isinstance(value, str) else None
+        if parsed:
+            return parsed
     return None
 
 
@@ -586,6 +608,18 @@ class ApifyListingScraper:
                 )
                 continue
 
+            if criteria.home_types and not _PROFILES[portal].supports_home_type:
+                # Fotocasa publica subtipos numéricos sin mapeo fiable: se omite
+                # antes que colar pisos cuando el usuario ha elegido tipos.
+                skipped.append(portal.value)
+                self._logger.warning(
+                    "scraper_portal_skipped",
+                    portal=portal.value,
+                    error_code=None,
+                    reason="home_type_unsupported",
+                )
+                continue
+
             items = await self._fetch_portal(portal, criteria)
             portal_kept = 0
             radius_dropped = 0
@@ -594,6 +628,7 @@ class ApifyListingScraper:
             year_unknown = 0
             energy_dropped = 0
             energy_unknown = 0
+            home_type_dropped = 0
             radius_km = criteria.radius_km
             geo_enabled = (
                 radius_km is not None
@@ -612,6 +647,10 @@ class ApifyListingScraper:
                     elif radius_km is not None and distance_km > radius_km:
                         radius_dropped += 1
                         continue
+
+                if criteria.home_types and listing.home_type not in criteria.home_types:
+                    home_type_dropped += 1
+                    continue
 
                 if criteria.min_year_built is not None:
                     if listing.year_built is None:
@@ -654,6 +693,14 @@ class ApifyListingScraper:
                     kept_count=portal_kept,
                     dropped_count=year_dropped,
                     unknown_year_count=year_unknown,
+                )
+            if criteria.home_types:
+                self._logger.info(
+                    "listings_filtered_by_home_type",
+                    portal=portal.value,
+                    home_types=list(criteria.home_types),
+                    kept_count=portal_kept,
+                    dropped_count=home_type_dropped,
                 )
             if criteria.max_energy_rating is not None:
                 self._logger.info(
@@ -799,6 +846,8 @@ class ApifyListingScraper:
                 round_up=False,
             )
             run_input["minSize"] = _as_int_string(min_size) if profile.price_as_string else int(min_size)
+        if criteria.home_types and profile.supports_home_type:
+            run_input["homeType"] = list(criteria.home_types)
         if criteria.max_energy_rating is not None and profile.supports_fetch_details:
             # Solo el detalle de Idealista publica el certificado; cuesta 1 request
             # extra por inmueble, así que se activa únicamente cuando hace falta.
@@ -916,6 +965,7 @@ class ApifyListingScraper:
             amenities=tuple(dict.fromkeys(amenities)),
             year_built=_year_built(item),
             energy_rating=_energy_rating(item),
+            home_type=_home_type(item),
             latitude=latitude,
             longitude=longitude,
             photos=photos,

@@ -373,6 +373,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
     "preferences": "Casa o chalet, piscina comunitaria, pádel comunitario",
     "must_have": ["piscina"],
     "preferred_terms": ["padel"],
+    "home_types": ["terracedHouse", "semiDetachedHouse", "detachedHouse"],
     "postal_code": "28031",
     "radius_km": 5,
     "min_year_built": 2020,
@@ -388,6 +389,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
 - **`preferred_terms`**: deseables pero **no excluyentes** (p. ej. `padel`). Se buscan en
   título, descripción y comodidades; los anuncios que los mencionan vuelven en
   `matched_terms` y se ordenan por delante del resto, sin descartar a los demás.
+- **`home_types`**: tipos de vivienda aceptados (`flat`, `penthouse`, `duplex`,
+  `terracedHouse`, `semiDetachedHouse`, `detachedHouse`, `villa`…). Se aplica en Idealista
+  en origen; mientras haya tipos seleccionados, Fotocasa se omite (sus subtipos son
+  códigos numéricos sin mapeo fiable). Sin tipos, se buscan todos.
 - **`min_year_built`**: filtro duro cuando el portal publica el año (`year_built` en la
   respuesta). Si no consta, el LLM exige que la descripción lo confirme; los anuncios sin
   año pueden quedar fuera.
@@ -732,6 +737,8 @@ DAILY_PREFERENCES=
 DAILY_MUST_HAVE=
 # Términos deseables (no excluyentes), separados por comas: se destacan y van primero.
 DAILY_PREFERRED_TERMS=
+# Tipos de vivienda (vacío = todos): piso, adosado, pareado, independiente...
+DAILY_HOME_TYPES=
 # Radio geográfico: CP y radio deben configurarse juntos (vacío = sin radio).
 DAILY_POSTAL_CODE=
 DAILY_RADIUS_KM=
@@ -923,6 +930,7 @@ pytest -k "scheduled" -v                 # solo el job diario
 | `DAILY_*` | ver sección 10 | no | criterios del cron (solo sin perfil) |
 | `DAILY_MUST_HAVE` | vacío | no | requisitos obligatorios del cron (`piscina,padel`) |
 | `DAILY_PREFERRED_TERMS` | vacío | no | deseables no excluyentes; se destacan primero |
+| `DAILY_HOME_TYPES` | vacío | no | tipos de vivienda; vacío = todos |
 | `DAILY_POSTAL_CODE` | vacío | no | requiere `DAILY_RADIUS_KM` |
 | `DAILY_RADIUS_KM` | vacío | no | 1-50 km |
 | `DAILY_MIN_YEAR_BUILT` | vacío | no | 1800-año actual+1 |

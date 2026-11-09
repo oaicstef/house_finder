@@ -39,6 +39,7 @@ DEFAULT_SEARCH_PROFILE: dict[str, Any] = {
     "preferences": "Casa o chalet, padel cominitario, piscina comunitaria",
     "must_have": ["padel"],
     "preferred_terms": [],
+    "home_types": [],
     "postal_code": "28031",
     "radius_km": 5,
     "min_year_built": 2020,
@@ -100,6 +101,8 @@ class Settings(BaseSettings):
     daily_must_have: str | None = None
     #: Términos deseables del cron, separados por comas (no excluyentes).
     daily_preferred_terms: str | None = None
+    #: Tipos de vivienda del cron, separados por comas (vacío = todos).
+    daily_home_types: str | None = None
     #: Radio geográfico del cron (CP y radio deben configurarse juntos).
     daily_postal_code: str | None = None
     daily_radius_km: int | None = Field(default=None, ge=1, le=50)
@@ -123,6 +126,7 @@ class Settings(BaseSettings):
         "daily_preferences",
         "daily_must_have",
         "daily_preferred_terms",
+        "daily_home_types",
         "daily_postal_code",
         "daily_radius_km",
         "daily_min_year_built",
@@ -298,6 +302,7 @@ class Settings(BaseSettings):
             preferences=preferences,
             must_have=self._parse_daily_must_have(),
             preferred_terms=self._parse_daily_preferred_terms(),
+            home_types=self._parse_daily_home_types(),
             postal_code=postal_code,
             radius_km=radius_km,
             min_year_built=self.daily_min_year_built,
@@ -307,6 +312,22 @@ class Settings(BaseSettings):
     def _parse_daily_preferred_terms(self) -> tuple[str, ...]:
         """Convierte ``DAILY_PREFERRED_TERMS`` (coma) en términos no excluyentes."""
         return self._parse_daily_terms(self.daily_preferred_terms, "DAILY_PREFERRED_TERMS")
+
+    def _parse_daily_home_types(self) -> tuple[str, ...]:
+        """Convierte ``DAILY_HOME_TYPES`` (coma) en valores canónicos."""
+        from app.domain.models import parse_home_type
+
+        canonical: list[str] = []
+        for term in self._parse_daily_terms(self.daily_home_types, "DAILY_HOME_TYPES"):
+            value = parse_home_type(term)
+            if value is None:
+                raise ConfigurationException(
+                    f"DAILY_HOME_TYPES contiene un tipo no soportado: {term!r}",
+                    details={"invalid_home_type": term},
+                )
+            if value not in canonical:
+                canonical.append(value)
+        return tuple(canonical)
 
     def _parse_daily_must_have(self) -> tuple[str, ...]:
         """Convierte ``DAILY_MUST_HAVE`` (lista separada por comas) en requisitos.

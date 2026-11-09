@@ -19,6 +19,9 @@ from uuid import UUID
 __all__ = [
     "AMENITY_LABELS",
     "ENERGY_RATING_SCALE",
+    "HOME_TYPES",
+    "HOME_TYPE_LABELS",
+    "parse_home_type",
     "Coordinates",
     "Listing",
     "ListingAssessment",
@@ -68,6 +71,67 @@ AMENITY_LABELS: dict[str, tuple[str, ...]] = {
     "storage_room": ("trastero", "trasteros"),
 }
 
+#: Tipos de vivienda canónicos (los mismos valores que acepta el actor de Idealista).
+HOME_TYPES: tuple[str, ...] = (
+    "flat",
+    "penthouse",
+    "duplex",
+    "terracedHouse",
+    "semiDetachedHouse",
+    "detachedHouse",
+    "villa",
+    "countryHouse",
+    "apartment",
+    "loft",
+)
+
+HOME_TYPE_LABELS: dict[str, str] = {
+    "flat": "Piso",
+    "penthouse": "Ático",
+    "duplex": "Dúplex",
+    "terracedHouse": "Adosado",
+    "semiDetachedHouse": "Pareado",
+    "detachedHouse": "Independiente",
+    "villa": "Villa",
+    "countryHouse": "Casa de campo",
+    "apartment": "Apartamento",
+    "loft": "Loft",
+}
+
+#: Alias en lenguaje natural (perfil, UI, `DAILY_HOME_TYPES`) -> valor canónico.
+HOME_TYPE_ALIASES: dict[str, str] = {
+    "flat": "flat",
+    "piso": "flat",
+    "pisos": "flat",
+    "penthouse": "penthouse",
+    "atico": "penthouse",
+    "aticos": "penthouse",
+    "duplex": "duplex",
+    "terracedhouse": "terracedHouse",
+    "adosado": "terracedHouse",
+    "adosados": "terracedHouse",
+    "casa adosada": "terracedHouse",
+    "casas adosadas": "terracedHouse",
+    "semidetachedhouse": "semiDetachedHouse",
+    "pareado": "semiDetachedHouse",
+    "pareados": "semiDetachedHouse",
+    "casa pareada": "semiDetachedHouse",
+    "casas pareadas": "semiDetachedHouse",
+    "detachedhouse": "detachedHouse",
+    "independiente": "detachedHouse",
+    "independientes": "detachedHouse",
+    "casa independiente": "detachedHouse",
+    "casas independientes": "detachedHouse",
+    "independanthouse": "detachedHouse",
+    "villa": "villa",
+    "villas": "villa",
+    "countryhouse": "countryHouse",
+    "casa de campo": "countryHouse",
+    "apartment": "apartment",
+    "apartamento": "apartment",
+    "loft": "loft",
+}
+
 #: Escala de certificado energético, de mejor (A) a peor (G).
 ENERGY_RATING_SCALE: tuple[str, ...] = ("A", "B", "C", "D", "E", "F", "G")
 
@@ -77,6 +141,13 @@ _ACCENTS = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
 def normalize_text(text: str) -> str:
     """Minúsculas y sin acentos, para comparar términos de forma tolerante."""
     return text.translate(_ACCENTS).lower()
+
+
+def parse_home_type(value: str) -> str | None:
+    """Convierte ``piso``/``adosado``/``terracedHouse`` al valor canónico."""
+    if not isinstance(value, str):
+        return None
+    return HOME_TYPE_ALIASES.get(normalize_text(value).strip())
 
 
 #: Radio medio terrestre en kilómetros (Haversine).
@@ -125,6 +196,8 @@ class Listing:
     year_built: int | None = None
     #: Certificado energético (``"A"``-``"G"``), ``None`` si el portal no lo publica.
     energy_rating: str | None = None
+    #: Tipo de vivienda canónico (``flat``, ``terracedHouse``...), si se conoce.
+    home_type: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     #: URLs ``https`` de fotos del portal (máximo 6, deduplicadas).
@@ -178,6 +251,8 @@ class SearchCriteria:
     #: Términos deseables pero NO excluyentes: los anuncios que los mencionan se
     #: destacan y se ordenan primero, sin descartar al resto.
     preferred_terms: tuple[str, ...] = ()
+    #: Tipos de vivienda aceptados (vacío = todos). Filtro duro.
+    home_types: tuple[str, ...] = ()
     #: Origen geográfico: código postal (se resuelve a coordenadas) o lat/lon.
     postal_code: str | None = None
     radius_km: int | None = None
@@ -201,6 +276,7 @@ class SearchCriteria:
             "preferences": (self.preferences or "").strip().lower() or None,
             "must_have": sorted(normalize_text(term) for term in self.must_have),
             "preferred_terms": sorted(normalize_text(term) for term in self.preferred_terms),
+            "home_types": sorted(self.home_types),
             "postal_code": (self.postal_code or "").strip() or None,
             "radius_km": self.radius_km,
             "latitude": self.latitude,

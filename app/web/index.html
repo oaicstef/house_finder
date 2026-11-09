@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#ffffff" />
     <title>Buscador inmobiliario</title>
-    <link rel="stylesheet" href="/static/styles.css?v=4" />
+    <link rel="stylesheet" href="/static/styles.css?v=5" />
   </head>
   <body>
     <header class="topbar">
@@ -69,6 +69,16 @@
             Habitaciones mín.
             <input id="f-min-rooms" name="min_rooms" type="number" min="0" max="20" step="1" />
           </label>
+          <fieldset class="field field--portals field--wide">
+            <legend>Tipo de vivienda (vacío = todos)</legend>
+            <label><input id="f-type-flat" type="checkbox" value="flat" /> Piso</label>
+            <label><input id="f-type-penthouse" type="checkbox" value="penthouse" /> Ático</label>
+            <label><input id="f-type-duplex" type="checkbox" value="duplex" /> Dúplex</label>
+            <label><input id="f-type-terraced" type="checkbox" value="terracedHouse" /> Adosado</label>
+            <label><input id="f-type-semi" type="checkbox" value="semiDetachedHouse" /> Pareado</label>
+            <label><input id="f-type-detached" type="checkbox" value="detachedHouse" /> Independiente</label>
+            <label><input id="f-type-villa" type="checkbox" value="villa" /> Villa</label>
+          </fieldset>
           <label class="field">
             Año mín. de construcción
             <input id="f-min-year" name="min_year_built" type="number" min="1800" max="2100" step="1" />
@@ -141,6 +151,6 @@
       </template>
     </main>
 
-    <script src="/static/app.js?v=4" defer></script>
+    <script src="/static/app.js?v=5" defer></script>
   </body>
 </html>

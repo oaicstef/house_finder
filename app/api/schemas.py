@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.domain.models import (
     Coordinates,
     Portal,
+    parse_home_type,
     ScoredListing,
     SearchCriteria,
     SearchResult,
@@ -34,6 +35,18 @@ __all__ = [
 ]
 
 PortalName = Literal["idealista", "fotocasa"]
+HomeType = Literal[
+    "flat",
+    "penthouse",
+    "duplex",
+    "terracedHouse",
+    "semiDetachedHouse",
+    "detachedHouse",
+    "villa",
+    "countryHouse",
+    "apartment",
+    "loft",
+]
 
 
 class SearchCreateRequest(BaseModel):
@@ -76,6 +89,15 @@ class SearchCreateRequest(BaseModel):
         ),
         examples=[["padel"]],
     )
+    home_types: list[HomeType] = Field(
+        default_factory=list,
+        max_length=10,
+        description=(
+            "Tipos de vivienda aceptados (vacío = todos). Se aplica en Idealista y "
+            "Fotocasa se omite mientras haya tipos seleccionados."
+        ),
+        examples=[["terracedHouse", "semiDetachedHouse", "detachedHouse"]],
+    )
     postal_code: str | None = Field(
         default=None,
         pattern=r"^\d{5}$",
@@ -113,7 +135,19 @@ class SearchCreateRequest(BaseModel):
         examples=["B"],
     )
 
-    @field_validator("must_have", "preferred_terms")
+    @field_validator("home_types", mode="before")
+    @classmethod
+    def _normalize_home_types(cls, values: Any) -> Any:
+        if not isinstance(values, list):
+            return values
+        return [
+            parse_home_type(value) or value.strip()
+            if isinstance(value, str)
+            else value
+            for value in values
+        ]
+
+    @field_validator("must_have", "preferred_terms", "home_types")
     @classmethod
     def _clean_terms(cls, values: list[str]) -> list[str]:
         cleaned: list[str] = []
@@ -188,6 +222,7 @@ class SearchCreateRequest(BaseModel):
             preferences=self.preferences,
             must_have=tuple(self.must_have),
             preferred_terms=tuple(self.preferred_terms),
+            home_types=tuple(self.home_types),
             postal_code=self.postal_code,
             radius_km=self.radius_km,
             latitude=self.latitude,
@@ -210,6 +245,7 @@ class SearchCreateRequest(BaseModel):
             preferences=criteria.preferences,
             must_have=list(criteria.must_have),
             preferred_terms=list(criteria.preferred_terms),
+            home_types=list(criteria.home_types),
             postal_code=criteria.postal_code,
             radius_km=criteria.radius_km,
             latitude=criteria.latitude,
@@ -233,6 +269,7 @@ class ListingResponse(BaseModel):
     location: str
     year_built: int | None
     energy_rating: str | None
+    home_type: str | None = None
     photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
     matched_terms: list[str] = Field(
@@ -279,6 +316,7 @@ class ListingResponse(BaseModel):
             location=listing.location,
             year_built=listing.year_built,
             energy_rating=listing.energy_rating,
+            home_type=listing.home_type,
             photos=list(listing.photos),
             amenities=list(listing.amenities),
             matched_terms=list(listing.matches_any(preferred_terms)),
