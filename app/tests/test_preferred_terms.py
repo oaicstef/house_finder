@@ -13,6 +13,12 @@ from app.config import Settings
 from app.domain.models import ListingAssessment, Portal, SearchCriteria
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
 from app.tests.conftest import FakeClassifier, FakeScraper, RecordingLogger, make_listing
+from app.tests.test_apify_scraper import (
+    RAW_ITEM,
+    _FakeClient,
+    build_scraper,
+    idealista_criteria,
+)
 
 PADEL_URL = "https://www.idealista.com/inmueble/1/"
 NO_PADEL_URL = "https://www.idealista.com/inmueble/2/"
@@ -138,3 +144,42 @@ def test_daily_preferred_terms_reach_criteria() -> None:
     )
 
     assert settings.build_daily_criteria().preferred_terms == ("padel", "piscina")
+
+
+@pytest.mark.asyncio
+async def test_fetches_details_when_preferred_terms_are_configured() -> None:
+    """El término puede estar solo en otra versión lingüística del anuncio."""
+    item = dict(RAW_ITEM)
+    item["url"] = "https://www.idealista.com/inmueble/111/"
+    item["propertyCode"] = "111"
+    item["_details"] = {
+        "comments": [
+            {"propertyComment": "Xalet amb pista de pàdel i piscina comunitària"}
+        ]
+    }
+    client = _FakeClient([item])
+
+    listings = await build_scraper(client).fetch_listings(
+        idealista_criteria(preferred_terms=("padel",))
+    )
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["run_input"]["propertyCodes"] == ["111"]
+    assert "pàdel" in listings[0].description
+    assert listings[0].matches_any(("padel",)) == ("padel",)
+
+
+@pytest.mark.asyncio
+async def test_does_not_fetch_details_without_preferred_terms() -> None:
+    client = _FakeClient([dict(RAW_ITEM)])
+
+    await build_scraper(client).fetch_listings(idealista_criteria())
+
+    assert len(client.calls) == 1
+
+
+def test_catalan_accents_are_normalized() -> None:
+    from app.domain.models import normalize_text
+
+    assert normalize_text("PÀDEL") == "padel"
+    assert normalize_text("xalet amb pàdel") == "xalet amb padel"

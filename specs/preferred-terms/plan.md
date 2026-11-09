@@ -131,3 +131,17 @@ con acentos, no exclusión, orden por destacados aunque la relevancia sea menor,
 en `matched_terms`, normalización/deduplicado en la API, fingerprint y `DAILY_PREFERRED_TERMS`.
 Suite completa: 239 tests en verde. Perfil de producción: `must_have: ["piscina"]` y
 `preferred_terms: ["padel"]`.
+
+## Revisión 2026-11-09
+
+El anuncio 111892839 aparecía en resultados pero sin la insignia de `padel`. El término
+está en la **versión catalana** del anuncio (`_details.comments[10]`: "pàdel"), que:
+
+1. no llega en el listado sin `fetchDetails`, y
+2. no coincidía porque `normalize_text` solo eliminaba tildes del español (`á`), no `à`.
+
+Correcciones: la tabla de acentos incluye `à è ì ò ù ç ï`; y, cuando `preferred_terms` está
+configurado, el scraper pide `propertyCodes` al actor para los candidatos que aún no
+mencionan ningún término, fusiona `propertyComment` + `comments[*].propertyComment` en la
+descripción y vuelve a calcular `matched_terms`. Coste medido: 5 detalles ≈ 17 s; solo se
+piden para los candidatos filtrados que no coinciden.

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any, Callable, Mapping, Sequence
@@ -718,10 +718,92 @@ class ApifyListingScraper:
                 details={"portals": skipped},
             )
 
+        preferred = criteria.preferred_terms
+        if preferred and listings:
+            # Los términos preferentes pueden estar en cualquier versión lingüística
+            # del anuncio (p. ej. "pàdel" en la catalana), que solo llega en
+            # ``_details.comments``. Se piden detalles solo a los candidatos que aún
+            # no mencionan ninguno de los términos, no a todo el listado.
+            missing = [item for item in listings if not item.matches_any(preferred)]
+            if missing:
+                enriched = await self._enrich_descriptions(missing)
+                by_url = {item.url: item for item in enriched}
+                listings = [by_url.get(item.url, item) for item in listings]
+
         # Se devuelven TODOS los candidatos (acotados por ``max_items``): recortar aquí
         # a ``max_results`` impediría que los filtros posteriores (must_have) y el
         # clasificador vieran más opciones que las estrictamente devueltas al cliente.
         return listings
+
+    async def _enrich_descriptions(self, listings: list[Listing]) -> list[Listing]:
+        """Añade las variantes de descripción de ``_details`` a cada anuncio."""
+        actor_id = (self._actor_ids.get(Portal.IDEALISTA) or "").strip()
+        if not actor_id:
+            return listings
+
+        codes: dict[str, Listing] = {}
+        for listing in listings:
+            if listing.portal is not Portal.IDEALISTA:
+                continue
+            match = re.search(r"/inmueble/(\d+)", listing.url)
+            if match:
+                codes[match.group(1)] = listing
+        if not codes:
+            return listings
+
+        started = time.perf_counter()
+        run_input = {
+            "propertyCodes": list(codes),
+            "country": "es",
+            "operation": self._operation,
+            "propertyType": "homes",
+        }
+        try:
+            items = await asyncio.to_thread(self._run_actor, actor_id, run_input)
+        except ScraperException as exc:
+            self._logger.warning(
+                "listing_details_failed",
+                error_code=exc.code,
+                candidate_count=len(codes),
+                duration_ms=self._elapsed_ms(started),
+            )
+            return listings
+
+        descriptions: dict[str, str] = {}
+        for item in items:
+            code = str(item.get("propertyCode") or "")
+            details = item.get("_details")
+            if not code or not isinstance(details, Mapping):
+                continue
+            texts = [details.get("propertyComment")]
+            comments = details.get("comments")
+            if isinstance(comments, list):
+                for comment in comments:
+                    if isinstance(comment, Mapping):
+                        texts.append(comment.get("propertyComment"))
+            merged = "\n".join(
+                dict.fromkeys(
+                    text.strip()
+                    for text in texts
+                    if isinstance(text, str) and text.strip()
+                )
+            )
+            if merged:
+                descriptions[code] = merged
+
+        enriched = [
+            replace(listing, description=descriptions.get(code, listing.description))
+            for code, listing in codes.items()
+        ]
+        self._logger.info(
+            "listing_details_enriched",
+            candidate_count=len(codes),
+            enriched_count=len(descriptions),
+            duration_ms=self._elapsed_ms(started),
+        )
+        # Mantiene el orden original de la lista.
+        by_url = {listing.url: listing for listing in enriched}
+        return [by_url.get(listing.url, listing) for listing in listings]
 
     async def _fetch_portal(self, portal: Portal, criteria: SearchCriteria) -> list[dict[str, Any]]:
         actor_id = (self._actor_ids.get(portal) or "").strip()
@@ -971,6 +1053,10 @@ class ApifyListingScraper:
             photos=photos,
             raw=dict(item),
         )
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return round((time.perf_counter() - started) * 1000, 2)
 
     @staticmethod
     def _distance_km(listing: Listing, criteria: SearchCriteria) -> float | None:

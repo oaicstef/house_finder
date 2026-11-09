@@ -135,7 +135,12 @@ HOME_TYPE_ALIASES: dict[str, str] = {
 #: Escala de certificado energético, de mejor (A) a peor (G).
 ENERGY_RATING_SCALE: tuple[str, ...] = ("A", "B", "C", "D", "E", "F", "G")
 
-_ACCENTS = str.maketrans("áéíóúüñÁÉÍÓÚÜÑ", "aeiouunAEIOUUN")
+#: Incluye tildes catalanas (à, è, ò, ç...) porque Idealista publica versiones
+#: del anuncio en catalán y "pàdel" debe compararse como "padel".
+_ACCENTS = str.maketrans(
+    "áàéèíìóòúùüïñçÁÀÉÈÍÌÓÒÚÙÜÏÑÇ",
+    "aaeeiioouuuincAAEEIIOOUUUINC",
+)
 
 
 def normalize_text(text: str) -> str:

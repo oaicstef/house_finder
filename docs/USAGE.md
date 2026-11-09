@@ -388,7 +388,10 @@ curl -X POST http://127.0.0.1:8000/api/v1/searches \
   No se puede combinar `postal_code` con `latitude`/`longitude`.
 - **`preferred_terms`**: deseables pero **no excluyentes** (p. ej. `padel`). Se buscan en
   título, descripción y comodidades; los anuncios que los mencionan vuelven en
-  `matched_terms` y se ordenan por delante del resto, sin descartar a los demás.
+  `matched_terms` y se ordenan por delante del resto, sin descartar a los demás. Si un
+  candidato no menciona el término en el listado, se piden sus `_details` (que incluyen las
+  versiones del anuncio en otros idiomas) solo para esos anuncios; es una ejecución extra
+  del actor y añade unos segundos a la búsqueda.
 - **`home_types`**: tipos de vivienda aceptados (`flat`, `penthouse`, `duplex`,
   `terracedHouse`, `semiDetachedHouse`, `detachedHouse`, `villa`…). Se aplica en Idealista
   en origen; mientras haya tipos seleccionados, Fotocasa se omite (sus subtipos son
