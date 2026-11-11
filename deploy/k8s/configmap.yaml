@@ -11,7 +11,16 @@ data:
   TIMEZONE: "Europe/Madrid"
   ENABLE_SCHEDULER: "true"
 
-  # Actores de scraping verificados (esquemas distintos; el scraper los adapta).
+  # Proveedor de scraping: local | idealista-api (acceso aprobado) | apify | none.
+  SCRAPER_PROVIDERS: "idealista=apify,fotocasa=local"
+  SCRAPER_FALLBACK_TO_APIFY: "true"
+  SCRAPER_MAX_ITEMS: "100"
+  SCRAPER_MAX_PAGES: "5"
+  SCRAPER_TIMEOUT_SECONDS: "20"
+  SCRAPER_MAX_RETRIES: "2"
+  SCRAPER_RATE_LIMIT_PER_MINUTE: "20"
+
+  # Actores de Apify (solo para los portales con proveedor apify o de respaldo).
   APIFY_IDEALISTA_ACTOR: "igolaizola/idealista-scraper"
   APIFY_FOTOCASA_ACTOR: "igolaizola/fotocasa-scraper"
   SEARCH_OPERATION: "sale"

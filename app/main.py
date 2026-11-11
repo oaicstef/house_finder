@@ -97,13 +97,17 @@ def create_app(container: ServiceContainer | None = None) -> FastAPI:
             yield
         finally:
             _stop_scheduler(getattr(app.state, "scheduler", None))
+            close_scraper = getattr(services.scraper, "aclose", None)
+            if close_scraper is not None:
+                await close_scraper()
             logger.info("app_shutdown", environment=settings.environment)
 
     application = FastAPI(
         title="Agente de búsqueda inmobiliaria personalizada",
         description=(
-            "Scraping de Idealista y Fotocasa vía Apify, clasificación semántica con "
-            "DeepSeek y búsqueda diaria programada. Arquitectura hexagonal."
+            "Scraping de Idealista y Fotocasa con proveedor intercambiable (HTTP propio "
+            "o actores de Apify), clasificación semántica con DeepSeek y búsqueda diaria "
+            "programada. Arquitectura hexagonal."
         ),
         version="1.0.0",
         lifespan=lifespan,

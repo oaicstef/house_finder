@@ -32,16 +32,25 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 ```
 POST /api/v1/searches
    │
-   ├─ 1. Apify        → scrapea Idealista y Fotocasa, devuelve anuncios crudos en JSON
+   ├─ 1. Scraper      → Idealista y Fotocasa, un proveedor por portal (HTTP propio o Apify)
       ├─ 2. Filtro duro  → descarta por precio / m² / habitaciones y por `must_have`
    ├─ 3. DeepSeek     → puntúa cada anuncio: relevance 0-1 + reason
    └─ 4. Repositorio  → guarda el resultado y responde 201
 ```
 
-**Apify** es la pieza de scraping: Idealista y Fotocasa no tienen API pública y bloquean el
-scraping directo, así que el proyecto delega en actores de Apify, que devuelven los anuncios
-como JSON. Apify **solo obtiene datos crudos**; el filtrado fino y la puntuación de
-relevancia los hace DeepSeek. Ver
+El **scraper** tiene un proveedor por portal, elegido con `SCRAPER_PROVIDERS`:
+
+| Proveedor | Cómo obtiene los anuncios | Credenciales |
+| --- | --- | --- |
+| `local` | HTTP directo al portal y parseo de su JSON embebido (Fotocasa) | ninguna |
+| `apify` | actor de Apify (Idealista y Fotocasa) | `APIFY_TOKEN` |
+| `none` | portal desactivado | — |
+
+Por defecto **Fotocasa** usa el scraper propio y **Idealista** sigue en Apify: Idealista está
+detrás de DataDome y rechaza clientes HTTP (403) incluso desde IP residencial, mientras que
+Fotocasa sirve la búsqueda ya renderizada. Si la fuente local falla, la búsqueda continúa con
+Apify para ese portal (`SCRAPER_FALLBACK_TO_APIFY`). El scraper **solo obtiene datos crudos**;
+el filtrado fino y la puntuación los hace DeepSeek. Ver
 [¿Qué papel juega Apify?](docs/USAGE.md#41-qué-papel-juega-apify).
 
 **DeepSeek** es el clasificador: recibe los anuncios ya normalizados y responde, para cada
@@ -61,7 +70,13 @@ app/
 │   ├── search_service.py    # orquesta scraping → clasificación → persistencia
 │   └── scheduled_search.py  # job diario idempotente
 ├── infrastructure/
-│   ├── scrapers/apify_scraper.py
+│   ├── scrapers/
+│   │   ├── normalization.py     # item crudo -> Listing (independiente del proveedor)
+│   │   ├── filtering.py         # filtros duros (radio, precio, m², habitaciones)
+│   │   ├── listing_scraper.py   # orquesta una fuente por portal + respaldo
+│   │   ├── factory.py           # SCRAPER_PROVIDERS -> proveedor por portal
+│   │   ├── apify_scraper.py     # adaptador Apify (proveedor opcional)
+│   │   └── sources/             # http.py, fotocasa.py, apify.py, base.py
 │   ├── classifiers/deepseek_classifier.py
 │   ├── geocoding/carto_ciudad_locator.py
 │   ├── repositories/          # memory (volátil) + json_file (persistente)
@@ -72,6 +87,7 @@ app/
 │   ├── middleware.py        # request_id + duration_ms
 │   ├── exception_handlers.py
 │   └── routes.py            # endpoints delgados
+├── tools/scraper_probe.py   # prueba de humo del scraper por portal
 ├── web/                     # UI: index.html + styles.css + app.js (sin build)
 └── tests/                   # pytest + pytest-asyncio (sin APIs reales)
 deploy/k8s/                  # Namespace, ConfigMap, PVC, Deployment ARM64, Service
@@ -184,7 +200,18 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 | `LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL` |
 | `ENABLE_SCHEDULER` | `true` | Activa el cron diario (07:00, `TIMEZONE`). |
 | `TIMEZONE` | `Europe/Madrid` | Zona horaria del cron. |
-| `APIFY_TOKEN` | — | **Obligatoria**. Token de Apify. |
+| `SCRAPER_PROVIDERS` | `idealista=apify,fotocasa=local` | Mapa `portal=proveedor` (`local` / `idealista-api` / `apify` / `none`). Idealista API requiere acceso oficial aprobado. Los portales no listados quedan desactivados. |
+| `SCRAPER_FALLBACK_TO_APIFY` | `true` | Si la fuente local falla o no devuelve anuncios, se reintenta con Apify para ese portal. |
+| `SCRAPER_MAX_ITEMS` | `40` | Anuncios candidatos que se piden por portal. |
+| `SCRAPER_MAX_PAGES` | `5` | Páginas de búsqueda que se recorren como máximo (30 anuncios por página). |
+| `SCRAPER_TIMEOUT_SECONDS` | `20` | Timeout por petición HTTP del scraper propio. |
+| `SCRAPER_MAX_RETRIES` | `2` | Reintentos con backoff en 429/5xx. |
+| `SCRAPER_RATE_LIMIT_PER_MINUTE` | `20` | Peticiones por minuto contra cada portal. |
+| `SCRAPER_USER_AGENT` | vacío (UA de navegador) | Cabecera `User-Agent` del scraper propio. |
+| `SCRAPER_PROXY_URL` | vacío | Egreso alternativo (proxy residencial o relay) si el portal bloquea la IP. |
+| `SCRAPER_FOTOCASA_LOCATION_SEGMENT` | vacío | Segmento de ubicación de Fotocasa cuando el texto libre no resuelve. |
+| `APIFY_TOKEN` | — | **Obligatoria solo si** algún portal usa el proveedor `apify`. |
+| `IDEALISTA_API_CLIENT_ID`, `IDEALISTA_API_CLIENT_SECRET` | — | Credenciales de partner, obligatorias solo con `idealista=idealista-api`; requieren aprobación de Idealista. |
 | `APIFY_IDEALISTA_ACTOR` | `igolaizola/idealista-scraper` | Actor de Apify para Idealista (verificado). |
 | `APIFY_FOTOCASA_ACTOR` | vacío (portal omitido) | Actor de Apify para Fotocasa; pon `igolaizola/fotocasa-scraper` para activarlo (pay-per-event). |
 | `SEARCH_OPERATION` | `rent` | `rent` (alquiler) \| `sale` (compraventa). |

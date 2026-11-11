@@ -272,6 +272,12 @@ function buildCard(listing) {
 
   node.querySelector(".card__title").textContent = listing.title;
   node.querySelector(".card__location").textContent = listing.location || "Ubicación no disponible";
+  const condition = node.querySelector(".card__condition");
+  if (listing.listing_condition === "new" || listing.listing_condition === "second_hand") {
+    condition.hidden = false;
+    condition.textContent =
+      listing.listing_condition === "new" ? "Obra nueva" : "Segunda mano";
+  }
 
   const price = node.querySelector(".card__price");
   price.textContent = euros(listing.price_eur);

@@ -50,9 +50,15 @@ Ajusta `images[].newTag` en `kustomization.yaml` (o el tag con `kubectl set imag
 kubectl create namespace house-finder --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n house-finder create secret generic house-finder-secrets \
   --from-literal=APIFY_TOKEN='apify_api_...' \
+  --from-literal=IDEALISTA_API_CLIENT_ID='...' \
+  --from-literal=IDEALISTA_API_CLIENT_SECRET='...' \
   --from-literal=DEEPSEEK_API_KEY='sk-...' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
+
+Las credenciales `IDEALISTA_API_*` solo hacen falta si Idealista aprobó el acceso a su API
+oficial y se selecciona `idealista=idealista-api` en `SCRAPER_PROVIDERS`. No habilites ese
+proveedor hasta validar su acceso y respuesta en el entorno autorizado.
 
 ## 3. Aplicar
 

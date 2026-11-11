@@ -33,7 +33,7 @@ Construir el backend de un agente de búsqueda inmobiliaria personalizada que sc
 | Framework HTTP | FastAPI | Inyección de dependencias nativa (`Depends`), validación Pydantic v2, documentación OpenAPI automática y handlers globales de excepción. |
 | Validación/DTO | Pydantic v2 en la capa `api` (`schemas.py`) + `dataclasses` en dominio | Mantiene el dominio libre de frameworks (regla de dependencia) y da validación declarativa en el borde. |
 | Configuración | `pydantic-settings` (`BaseSettings`) + `python-dotenv` | Una sola fuente de verdad tipada, carga de `.env` y validación al arranque con error de dominio en lugar de `KeyError`. |
-| Scraping | `apify-client` ejecutado con `asyncio.to_thread` | Apify abstrae proxies/anti-bot; el cliente es síncrono, se aísla en un hilo para no bloquear el event loop. IDs de actor configurables (`APIFY_IDEALISTA_ACTOR`, `APIFY_FOTOCASA_ACTOR`) para no acoplar el código a un actor concreto. |
+| Scraping | `apify-client` ejecutado con `asyncio.to_thread` (proveedor por portal, ver [`specs/no-apify-scraping`](../no-apify-scraping/plan.md)) | Apify abstrae proxies/anti-bot; el cliente es síncrono, se aísla en un hilo para no bloquear el event loop. Desde `specs/no-apify-scraping` el proveedor se elige por portal (`SCRAPER_PROVIDERS`): Fotocasa usa HTTP propio y Apify queda como opcional/respaldo. |
 | Clasificación | SDK `openai` apuntando a `https://api.deepseek.com`, `model="deepseek-flash"` | API compatible con OpenAI; permite cambiar de proveedor sin reescribir el port. Salida forzada a JSON para parseo determinista. |
 | Scheduler | `APScheduler` `AsyncIOScheduler` + `CronTrigger(hour=7, minute=0)` | Coexiste con el event loop de FastAPI, se arranca/para en el `lifespan` y se desactiva con `ENABLE_SCHEDULER=false`. |
 | Logging | `structlog` (`JSONRenderer` en prod, `ConsoleRenderer` en dev) + `contextvars` | Logs correlacionables por `request_id`/`search_id` sin pasar el logger por todas las firmas; JSON apto para agregadores. |
@@ -732,7 +732,114 @@ resultados parciales indistinguibles de una búsqueda completa. Fotocasa sí res
   cambios y ahora se autodiagnostica: `[('idealista', 0), ('fotocasa', 5)]` +
   `idealista: sin anuncios; revisa el actor del portal y la ubicación`.
 
+## Revisión 2026-11-11 — Mostrar si el anuncio es obra nueva o segunda mano
 
+### Objetivo
+
+Exponer en los resultados si el portal identifica explícitamente el inmueble como obra
+nueva o de segunda mano. El dato será opcional: si no se publica o no se puede interpretar
+con seguridad, se devuelve `null` y no se muestra una etiqueta engañosa.
+
+### Alcance
+
+#### Dentro del alcance
+- Añadir `listing_condition` al modelo de dominio y a `ListingResponse`.
+- Normalizar indicadores explícitos conocidos en la respuesta cruda de los portales.
+- Mostrar “Obra nueva” o “Segunda mano” en cada tarjeta cuando el dato esté disponible.
+- Cubrir valores booleanos/textuales, ausencia y compatibilidad del contrato con tests.
+
+#### Fuera del alcance (out of scope)
+- Filtros de búsqueda por estado del inmueble.
+- Inferir el estado por año de construcción, descripción genérica o IDs de catálogo no
+  documentados.
+- Cambios en persistencia de criterios, scheduler o proveedor de scraping.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Valores del dominio/API | `new`, `second_hand` o `null` | Contrato estable y explícito sin mezclar etiquetas de UI |
+| Interpretación | Solo indicadores explícitos y reconocidos | Evita clasificar incorrectamente anuncios incompletos |
+| Presentación | Etiqueta localizada en la tarjeta | El dato describe el anuncio, no es un filtro |
+
+### Contratos de interfaces (ports)
+
+No se modifican los ports. `Listing` añade `listing_condition: Literal["new", "second_hand"] | None`;
+`ListingResponse` serializa el mismo campo.
+
+### Modelo de datos
+
+Campo aditivo `listing_condition` en la entidad de dominio y respuesta Pydantic. Se aceptan
+solo dos valores; ausencia o señal desconocida se representa como `null`. Los resultados
+guardados antiguos deben seguir deserializándose.
+
+### Endpoints de la API
+
+Sin rutas ni códigos de error nuevos. Las respuestas existentes de búsqueda incluyen
+`listing_condition` por anuncio (`new`, `second_hand` o `null`).
+
+### Flujo del job programado
+
+Sin cambios: el scheduler consume el mismo `ScraperPort` y persiste anuncios con el campo
+opcional; no se usa el dato para idempotencia ni filtrado.
+
+### Estrategia de logging
+
+Sin nuevos eventos: el estado se entrega como dato del anuncio, no como condición operativa.
+No se registran descripciones ni datos personales.
+
+### Jerarquía de excepciones
+
+Sin cambios: valores no reconocidos se normalizan a `null`, no son errores de negocio.
+
+### Plan de tests
+
+- Tests unitarios de normalización para indicador verdadero/falso, alias textuales,
+  valores desconocidos y ausencia del dato.
+- Test de `ListingResponse.from_domain` para serializar el valor.
+- Test de tarjeta/renderizado si hay infraestructura de tests web; en su ausencia, validar
+  el módulo JS y conservar la etiqueta oculta cuando el valor es `null`.
+- Ejecutar la suite de pytest y los checks disponibles del frontend.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| Los portales usan campos diferentes o no publican el estado | El dato puede faltar | Campo opcional; agregar alias solo con evidencia |
+| `false` significa “no es promoción de obra nueva” y no estado de reventa | Clasificación falsa | Interpretar booleanos únicamente en campos cuyo nombre expresa obra nueva |
+| Valores numéricos de catálogo cambian por portal | Etiqueta incorrecta | No interpretar IDs sin catálogo verificado |
+
+### Orden de implementación
+
+1. [x] `app/domain/models.py`, `app/infrastructure/scrapers/normalization.py` — añadir el
+   campo y parser conservador; done cuando señales explícitas se normalizan y señales
+   desconocidas quedan en `null`.
+2. [x] `app/api/schemas.py`, `app/web/index.html`, `app/web/app.js`, estilos — propagar y
+   mostrar la etiqueta; done cuando ambas opciones aparecen y `null` no crea espacio/etiqueta.
+3. [x] Tests de dominio/API/UI disponibles — done cuando cubren mapeo, serialización y
+   ausencia sin romper datos guardados; suite pertinente en verde.
+
+### Criterios de aceptación
+
+- [x] Un anuncio marcado explícitamente como obra nueva devuelve `listing_condition: "new"`
+  y muestra “Obra nueva”.
+- [x] Un anuncio marcado explícitamente como segunda mano devuelve
+  `listing_condition: "second_hand"` y muestra “Segunda mano”.
+- [x] Si el portal no publica el dato, el valor es `null` y no se muestra etiqueta.
+- [x] Las búsquedas y resultados antiguos siguen siendo compatibles.
+
+### Checklist de progreso
+
+- [x] 1. Añadir el campo de dominio y normalización conservadora.
+- [x] 2. Propagar a API y mostrar la etiqueta en la tarjeta.
+- [x] 3. Añadir pruebas focalizadas y validar la suite.
+
+### Evidencia de esta revisión
+
+- Tests nuevos: `app/tests/test_listing_condition.py` y cobertura de paso por Fotocasa en
+  `app/tests/test_fotocasa_source.py`.
+- `pytest -q`: suite completa en verde.
+- `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
 
 
 

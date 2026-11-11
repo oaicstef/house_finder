@@ -269,6 +269,7 @@ class ListingResponse(BaseModel):
     location: str
     year_built: int | None
     energy_rating: str | None
+    listing_condition: Literal["new", "second_hand"] | None = None
     home_type: str | None = None
     photos: list[str] = Field(default_factory=list)
     amenities: list[str] = Field(default_factory=list)
@@ -316,6 +317,7 @@ class ListingResponse(BaseModel):
             location=listing.location,
             year_built=listing.year_built,
             energy_rating=listing.energy_rating,
+            listing_condition=listing.listing_condition,
             home_type=listing.home_type,
             photos=list(listing.photos),
             amenities=list(listing.amenities),

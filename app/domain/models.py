@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import Enum
-from typing import Any, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 from uuid import UUID
 
 __all__ = [
@@ -215,6 +215,8 @@ class Listing:
     photos: tuple[str, ...] = ()
     # ``compare=False`` evita que datos arbitrarios intervengan en igualdad/hash.
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False, repr=False)
+    #: Estado publicado por el portal; ``None`` si no se conoce.
+    listing_condition: Literal["new", "second_hand"] | None = None
 
     @property
     def price_per_m2(self) -> float | None:

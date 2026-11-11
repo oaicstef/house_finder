@@ -19,7 +19,7 @@ from app.application.services.search_profile import (
 from app.application.services.search_service import SearchService
 from app.config import Settings, get_settings
 from app.domain.exceptions import ConfigurationException
-from app.domain.models import Portal, SearchCriteria
+from app.domain.models import SearchCriteria
 from app.domain.ports import (
     ClassifierPort,
     ListingRepository,
@@ -36,7 +36,7 @@ from app.infrastructure.repositories.search_profile_store import (
     InMemorySearchProfileStore,
     JsonSearchProfileStore,
 )
-from app.infrastructure.scrapers.apify_scraper import ApifyListingScraper
+from app.infrastructure.scrapers.factory import build_scraper
 
 __all__ = [
     "ContainerDep",
@@ -81,17 +81,8 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         repository = InMemoryListingRepository()
         profile_store = InMemorySearchProfileStore()
 
-    scraper: ScraperPort = ApifyListingScraper(
-        token=resolved.apify_token,
-        actor_ids={
-            Portal.IDEALISTA: resolved.apify_idealista_actor,
-            Portal.FOTOCASA: resolved.apify_fotocasa_actor,
-        },
-        max_items=resolved.apify_max_items,
-        timeout_seconds=resolved.apify_timeout_seconds,
-        operation=resolved.search_operation,
-        max_charge_usd=resolved.apify_max_charge_usd,
-    )
+    # El proveedor por portal lo decide ``SCRAPER_PROVIDERS`` (local | apify | none).
+    scraper: ScraperPort = build_scraper(resolved)
     classifier: ClassifierPort = DeepSeekListingClassifier(
         api_key=resolved.deepseek_api_key,
         model=resolved.deepseek_model,

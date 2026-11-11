@@ -80,6 +80,28 @@ class Settings(BaseSettings):
     apify_timeout_seconds: int = Field(default=300, ge=10, le=900)
     # Tope de gasto por ejecución de actor (None = sin límite explícito).
     apify_max_charge_usd: float | None = Field(default=None, gt=0)
+    #: Credenciales para la Search API oficial (solo tras aprobación de Idealista).
+    idealista_api_client_id: str | None = None
+    idealista_api_client_secret: str | None = None
+
+    # --- Scraper propio (sin Apify) ---------------------------------------
+    #: Mapa ``portal=proveedor``. ``local`` usa la fuente HTTP propia,
+    #: ``idealista-api`` la Search API oficial (requiere acceso aprobado),
+    #: ``apify`` delega en el actor configurado y ``none`` desactiva el portal.
+    scraper_providers: str = "idealista=apify,fotocasa=local"
+    #: Si una fuente propia falla o no devuelve nada, se reintenta con Apify.
+    scraper_fallback_to_apify: bool = True
+    scraper_max_items: int = Field(default=40, ge=1, le=200)
+    scraper_max_pages: int = Field(default=5, ge=1, le=20)
+    scraper_timeout_seconds: float = Field(default=20.0, gt=0)
+    scraper_max_retries: int = Field(default=2, ge=0, le=5)
+    scraper_rate_limit_per_minute: int = Field(default=20, ge=1, le=120)
+    #: Vacío = UA de navegador por defecto (ver ``sources/http.py``).
+    scraper_user_agent: str = ""
+    #: Egreso alternativo para el scraper propio (proxy residencial, relay...).
+    scraper_proxy_url: str | None = None
+    #: Segmento de ubicación de Fotocasa cuando el texto libre no basta.
+    scraper_fotocasa_location_segment: str | None = None
 
     # Geocodificación de códigos postales (CartoCiudad).
     geocoding_base_url: str = "https://www.cartociudad.es/geocoder/api/geocoder"
@@ -120,6 +142,10 @@ class Settings(BaseSettings):
 
     @field_validator(
         "apify_max_charge_usd",
+        "idealista_api_client_id",
+        "idealista_api_client_secret",
+        "scraper_proxy_url",
+        "scraper_fotocasa_location_segment",
         "daily_max_price_eur",
         "daily_min_size_m2",
         "daily_min_rooms",
@@ -158,12 +184,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_required_secrets(self) -> "Settings":
-        """Falla al arrancar si faltan credenciales (salvo en entorno de test)."""
+        """Falla al arrancar si faltan credenciales (salvo en entorno de test).
+
+        ``APIFY_TOKEN`` solo es obligatorio si algún portal usa el proveedor
+        ``apify``: el scraper propio no necesita credenciales de terceros.
+        """
         if self.environment == "test":
             return self
+        required = {
+            env_name: attribute
+            for env_name, attribute in REQUIRED_SECRETS.items()
+            if env_name != "APIFY_TOKEN"
+        }
+        providers = self.scraper_providers_map
+        if any(provider == "apify" for provider in providers.values()):
+            required["APIFY_TOKEN"] = "apify_token"
+        if providers.get(Portal.IDEALISTA) == "idealista-api":
+            required["IDEALISTA_API_CLIENT_ID"] = "idealista_api_client_id"
+            required["IDEALISTA_API_CLIENT_SECRET"] = "idealista_api_client_secret"
         missing = [
             env_name
-            for env_name, attribute in REQUIRED_SECRETS.items()
+            for env_name, attribute in required.items()
             if not str(getattr(self, attribute) or "").strip()
         ]
         if missing:
@@ -172,6 +213,55 @@ class Settings(BaseSettings):
                 details={"missing": missing},
             )
         return self
+
+    @property
+    def scraper_providers_map(self) -> dict[Portal, str]:
+        """``SCRAPER_PROVIDERS`` como mapa portal -> proveedor.
+
+        Los portales no listados quedan desactivados (``none``) en lugar de asumir
+        un proveedor por sorpresa: el mapa es la fuente de verdad.
+
+        Raises:
+            ConfigurationException: si el formato, el portal o el proveedor no son
+                válidos.
+        """
+        raw = (self.scraper_providers or "").strip()
+        if not raw:
+            raise ConfigurationException(
+                "SCRAPER_PROVIDERS no puede estar vacío",
+                details={"hint": "ejemplo: idealista=apify,fotocasa=local"},
+            )
+        providers: dict[Portal, str] = {}
+        for chunk in raw.split(","):
+            entry = chunk.strip()
+            if not entry:
+                continue
+            name, separator, provider = entry.partition("=")
+            if not separator:
+                raise ConfigurationException(
+                    f"SCRAPER_PROVIDERS contiene una entrada sin '=': {entry!r}",
+                    details={"invalid_entry": entry},
+                )
+            try:
+                portal = Portal.parse(name)
+            except ValueError as exc:
+                raise ConfigurationException(
+                    f"SCRAPER_PROVIDERS contiene un portal no soportado: {name!r}",
+                    details={"invalid_portal": name.strip()},
+                ) from exc
+            normalized = provider.strip().lower()
+            if normalized not in ("local", "apify", "idealista-api", "none"):
+                raise ConfigurationException(
+                    f"SCRAPER_PROVIDERS contiene un proveedor no soportado: {provider!r}",
+                    details={"invalid_provider": provider.strip(), "portal": portal.value},
+                )
+            providers[portal] = normalized
+        if not providers:
+            raise ConfigurationException(
+                "SCRAPER_PROVIDERS no contiene ningún portal",
+                details={"value": raw},
+            )
+        return providers
 
     @property
     def json_logs(self) -> bool:

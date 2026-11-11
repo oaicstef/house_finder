@@ -70,29 +70,69 @@ DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxxxxxx
 > Las claves nunca se registran en los logs. Si faltan, el arranque falla con
 > `CONFIGURATION_ERROR` y un mensaje que lista las variables ausentes.
 
-## 4. Configurar los actores de Apify
+## 4. Elegir el proveedor de scraping
 
 ### 4.1 ¿Qué papel juega Apify?
 
-Idealista y Fotocasa **no ofrecen API pública** y aplican protección anti-bot (bloqueo por
-IP de datacenter, rate limiting, retos de JavaScript). En vez de implementar y mantener
-navegadores headless y rotación de proxies, se delega en **actores de Apify**: programas ya
-empaquetados que hacen ese trabajo y publican el resultado como un *dataset* JSON.
+Fotocasa no ofrece API pública. Idealista ofrece una Search API con acceso de partner
+restringido; su web aplica protección anti-bot (bloqueo por IP de datacenter, rate limiting,
+retos de JavaScript). Apify resuelve esa parte con
+**actores**: programas ya empaquetados que publican el resultado como un *dataset* JSON.
 
-En la arquitectura, Apify es **una implementación más del puerto `ScraperPort`**:
+En la arquitectura, el scraping está detrás del puerto `ScraperPort` y se elige por portal
+con `SCRAPER_PROVIDERS`:
 
 ```
-SearchService → ScraperPort (interfaz) → ApifyListingScraper → Apify
+SearchService → ScraperPort (interfaz) → ListingScraper
+                                           ├── sources/fotocasa.py   (local: HTTP directo)
+                                           ├── sources/idealista_api.py (idealista-api: API oficial)
+                                           └── apify_scraper.py      (apify: actores)
 ```
 
-Secuencia real para cada portal ([`apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py)):
+Estado actual de cada portal:
+
+| Portal | Proveedor por defecto | Motivo |
+| --- | --- | --- |
+| Fotocasa | `local` | La búsqueda llega renderizada en el servidor y el JSON completo está en `<script id="__initial_props__">`; medido: 31 anuncios por página, con precio, m², habitaciones, coordenadas, fotos y descripción. |
+| Idealista | `apify` | DataDome devuelve **403** a clientes HTTP. Hay un adaptador opt-in para la Search API oficial, sujeto a aprobación y validación del contrato con credenciales reales. |
+
+**Scraper propio (`local`)** — [`sources/fotocasa.py`](../app/infrastructure/scrapers/sources/fotocasa.py):
+genera la URL de búsqueda por operación (`/es/comprar/...` o `/es/alquiler/...`), pagina con
+`?page=N`, manda los filtros que acepta el portal (`maxPrice`, `minPrice`, `minSurface`,
+`minRooms`) y traduce cada `realEstate` al esquema crudo que ya entendía el actor. No necesita
+credenciales, respeta `SCRAPER_RATE_LIMIT_PER_MINUTE`, reintenta 429/5xx con backoff y, si el
+portal bloquea o cambia el HTML, lanza `SCRAPER_FAILURE`.
+
+Prueba de humo (usa la misma configuración que la app, sin escribir resultados):
+
+```bash
+python -m app.tools.scraper_probe --portal fotocasa --location Madrid --max-items 5
+```
+
+**Respaldo:** con `SCRAPER_FALLBACK_TO_APIFY=true` (por defecto), si la fuente local falla o
+no devuelve anuncios se reintenta con Apify para ese portal y se registra
+`scraper_fallback_used`. Si no hay `APIFY_TOKEN`, el respaldo se desactiva y se avisa en el
+log (`scraper_fallback_disabled`); el scraper propio sigue funcionando solo.
+
+**Idealista sin Apify:** `SCRAPER_PROVIDERS=idealista=idealista-api,fotocasa=local`
+selecciona la Search API oficial para Idealista. Esta opción requiere aprobación previa de
+Idealista y `IDEALISTA_API_CLIENT_ID` / `IDEALISTA_API_CLIENT_SECRET`; sus búsquedas requieren
+coordenadas y radio. El adaptador aún debe validarse con acceso de partner real antes de
+considerarlo reemplazo de producción. No intenta evadir DataDome ni sustituye el alta oficial.
+
+Secuencia del proveedor `apify`
+([`sources/apify.py`](../app/infrastructure/scrapers/sources/apify.py)):
 
 1. `client.actor(actor_id).call(run_input, timeout_secs)` — lanza el actor y espera a que termine.
 2. `run["defaultDatasetId"]` — localiza el dataset de resultados.
 3. `client.dataset(id).iterate_items()` — recorre los anuncios crudos.
-4. `_normalize()` — traduce cada item a la entidad de dominio `Listing`.
-5. `_matches_hard_criteria()` — descarta lo que incumple precio/m²/habitaciones **antes**
+4. `normalize_listing()` — traduce cada item a la entidad de dominio `Listing`.
+5. `matches_hard_criteria()` — descarta lo que incumple precio/m²/habitaciones **antes**
    de llamar al LLM, para no gastar tokens.
+
+Los pasos 4 y 5 son comunes a todos los proveedores
+([`listing_scraper.py`](../app/infrastructure/scrapers/listing_scraper.py)), así que cambiar de
+proveedor no cambia el resultado normalizado.
 
 Al ser el SDK síncrono, la llamada se ejecuta con `asyncio.to_thread` para no bloquear el
 event loop de FastAPI.
@@ -104,9 +144,9 @@ relevancia. Solo devuelve anuncios crudos; eso lo resuelve el clasificador DeepS
 idempotencia del job diario evita repetir búsquedas ya hechas. Sin token o con un actor
 inexistente, la API responde `502` con `code: "SCRAPER_FAILURE"`.
 
-**Sustituible:** al estar detrás de un `Protocol`, cambiar de proveedor (o usar un scraper
-propio) es escribir otra clase con `fetch_listings()` y cambiarla en `build_container()`.
-Ni los servicios ni los endpoints se tocan.
+**Sustituible:** cada proveedor es una fuente con `fetch()`/`enrich()` registrada en
+[`factory.py`](../app/infrastructure/scrapers/factory.py). Añadir un portal nuevo es escribir
+su fuente y habilitarlo en `SCRAPER_PROVIDERS`; ni los servicios ni los endpoints se tocan.
 
 ### 4.2 ¿Necesito una suscripción de pago?
 
@@ -180,7 +220,8 @@ RELEVANCE_THRESHOLD=0.5
 ### 4.4 Esquema de entrada por portal
 
 Cada actor tiene su propio vocabulario y el scraper lo adapta automáticamente (perfiles
-`_PROFILES` en [`apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py)):
+`_PROFILES` en [`normalization.py`](../app/infrastructure/scrapers/normalization.py), compartidos
+por todos los proveedores):
 
 | Concepto | `igolaizola/idealista-scraper` | `igolaizola/fotocasa-scraper` |
 |---|---|---|
@@ -255,7 +296,10 @@ APIFY_TIMEOUT_SECONDS=300
 El scraper envía al actor este input (`location` o `latitude`/`longitude` + `distanceKm`,
 `operation`, `maxItems` y, si están definidos, `minPrice`, `maxPrice`, `minSize`). Si tu
 actor usa otros nombres de campo, ajústalo en `_build_run_input` en
-[`app/infrastructure/scrapers/apify_scraper.py`](../app/infrastructure/scrapers/apify_scraper.py).
+[`app/infrastructure/scrapers/sources/apify.py`](../app/infrastructure/scrapers/sources/apify.py).
+
+El proveedor `local` no habla el vocabulario del actor: sus parámetros de búsqueda son
+`page`, `maxPrice`, `minPrice`, `minSurface` y `minRooms` (ver §4.1).
 
 El normalizador reconoce varias claves por campo (`url`/`link`/`detailUrl`,
 `price`/`priceEur`/`priceAmount`, `size`/`squareMeters`/`surface`, ...), además de las

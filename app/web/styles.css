@@ -340,6 +340,22 @@ button:disabled {
   font-size: 0.82rem;
 }
 
+.card__condition {
+  display: inline-flex;
+  align-self: flex-start;
+  border: 1px solid #cdeadd;
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--good);
+  background: #f2fbf7;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.card__condition[hidden] {
+  display: none;
+}
+
 .card__price {
   margin: 0;
   font-size: 1.25rem;
