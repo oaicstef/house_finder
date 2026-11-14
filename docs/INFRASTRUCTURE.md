@@ -31,11 +31,19 @@ doméstica o del N100 tumba el copilot web, pero no house_finder.
 
 Contexto de casa (para no confundirlos):
 
-| Equipo | IP | Qué es |
+| Equipo | IP | Qué corre ahí |
 |---|---|---|
-| `rpi-mad` (Raspberry Pi 5) | 192.168.0.156 | Proyectos, `copilot-web` (nginx 7681 → ttyd 127.0.0.1:7682) |
-| N100 (Ubuntu) | 192.168.0.63 | Proxy inverso y TLS de `oaiccopilot.duckdns.org` |
+| `rpi-mad` (Raspberry Pi 5) | 192.168.0.156 | Checkouts de `~/src/` y `copilot-web` (nginx 7681 → ttyd 127.0.0.1:7682) |
+| N100 (Ubuntu) | 192.168.0.63 | **nginx-proxy-manager** (proxy inverso y TLS de los hosts públicos, UI :81), **`immich-server`** (:2283) y **`padelapi`** (Docker Compose) |
 | Router | 192.168.0.1 | Salida a Internet; IP pública 79.117.16.157 |
+
+El clúster de Oracle es **compartido**: además de `house_finder` aloja **`immich-ml`**
+(machine learning de Immich). El servidor de Immich vive en el N100 y el ML habla con él
+por **mTLS**, así que un cambio de certificados, URL o nombre de servicio en cualquiera de
+los dos lados rompe búsqueda inteligente y reconocimiento facial aunque la UI siga
+funcionando. `padelapi` se movió a casa: su deployment en k8s debe quedarse en
+`replicas: 0`.
+
 
 ## 2. Pipeline (`.github/workflows/release.yml`)
 
