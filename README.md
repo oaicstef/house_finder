@@ -204,7 +204,7 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 | `TIMEZONE` | `Europe/Madrid` | Zona horaria del cron. |
 | `ALERTS_ENABLED` | `false` | Activa la notificación push con las viviendas nuevas del job de las 07:00. |
 | `NTFY_BASE_URL` | `https://ntfy.sh` | Servidor ntfy (público o propio). |
-| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app del móvil. Obligatorio con `ALERTS_ENABLED=true`; llévalo al Secret, no a git. |
+| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app del móvil. Obligatorio con `ALERTS_ENABLED=true`; llévalo al Secret, no a git (en Kubernetes lo inyecta el pipeline desde el secreto `NTFY_TOPIC` del repositorio). |
 | `NTFY_TOKEN` | vacío | Token, solo si el topic está protegido en el servidor ntfy. |
 | `NTFY_PRIORITY` | `3` | Prioridad de la notificación (1 mínima – 5 urgente). |
 | `ALERT_CLICK_URL` | vacío | URL que abre la notificación (vacío = la primera vivienda nueva). |

@@ -862,6 +862,11 @@ ALERT_CLICK_URL=https://oaichousefinder.duckdns.org
    aplicación **no arranca** (`CONFIGURATION_ERROR`), para que las alertas no fallen en
    silencio.
 
+En Kubernetes no hay que tocar el clúster a mano: `ALERTS_ENABLED` está activado en
+`deploy/k8s/configmap.yaml` y el topic se guarda como secreto **`NTFY_TOPIC`** del
+repositorio de GitHub; el pipeline lo escribe en el Secret del clúster en cada despliegue
+(`git push` a `main`). Ver `deploy/k8s/README.md`.
+
 El mensaje incluye precio, m², habitaciones, portal, título y enlace de cada vivienda
 (hasta 10; el resto se resume en «…y N más»). Un fallo de ntfy se registra como
 `listing_alert_failed` y **no invalida la búsqueda**, que ya está guardada. En ntfy.sh un

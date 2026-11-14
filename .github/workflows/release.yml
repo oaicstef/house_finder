@@ -104,6 +104,37 @@ jobs:
               --docker-email="docker@github.com"
           fi
 
+      - name: Sync alert credentials into the app Secret
+        # El topic de ntfy es un secreto y no puede viajar en el repositorio.
+        # Se guarda en GitHub (Settings > Secrets > NTFY_TOPIC) y el pipeline lo
+        # escribe en el Secret del clúster en cada despliegue, con `patch --type
+        # merge` para no borrar APIFY_TOKEN, DEEPSEEK_API_KEY, etc.
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! grep -Eq '^[[:space:]]*ALERTS_ENABLED:[[:space:]]*"?true"?[[:space:]]*$' deploy/k8s/configmap.yaml; then
+            echo "ALERTS_ENABLED desactivado en el ConfigMap: no se tocan los secretos de alertas."
+            exit 0
+          fi
+          if [ -z "${NTFY_TOPIC:-}" ]; then
+            echo "::error::ALERTS_ENABLED=true pero falta el secreto NTFY_TOPIC del repositorio. El pod fallaría con CONFIGURATION_ERROR."
+            exit 1
+          fi
+          if ! kubectl -n house-finder get secret house-finder-secrets >/dev/null 2>&1; then
+            echo "::error::No existe el Secret house-finder-secrets (APIFY_TOKEN, DEEPSEEK_API_KEY...). Créalo antes de desplegar."
+            exit 1
+          fi
+          payload=$(python3 -c 'import json,os;d={"NTFY_TOPIC":os.environ["NTFY_TOPIC"]};t=os.environ.get("NTFY_TOKEN");d.update({"NTFY_TOKEN":t} if t else {});print(json.dumps({"stringData":d}))')
+          kubectl -n house-finder patch secret house-finder-secrets --type merge -p "$payload"
+          echo "Secret de alertas sincronizado (topic de ${#NTFY_TOPIC} caracteres)."
+          # Reinicia el pod solo si el topic cambió: la anotación es estable entre
+          # despliegues con el mismo valor, así que no provoca rollouts de más.
+          kubectl -n house-finder annotate deployment/house-finder \
+            house-finder.io/alert-topic-sha="$(printf '%s' "$NTFY_TOPIC" | sha256sum | cut -c1-12)" \
+            --overwrite 2>/dev/null || true
+
       - name: Apply Kubernetes manifests
         run: kubectl apply -k deploy/k8s
 

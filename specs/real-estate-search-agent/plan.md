@@ -1085,7 +1085,9 @@ búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de
 3. [x] Consulta de la ejecución anterior en ambos repositorios.
 4. [x] Cableado en `ScheduledSearchService` y en el contenedor de servicios.
 5. [x] Configuración validada, documentación y manifiestos de despliegue.
-6. [x] Ejecutar pruebas y comprobaciones estáticas.
+6. [x] Pipeline: `ALERTS_ENABLED` activo en el ConfigMap y el topic sincronizado al
+   Secret del clúster desde el secreto `NTFY_TOPIC` del repositorio.
+7. [x] Ejecutar pruebas y comprobaciones estáticas.
 
 ### Criterios de aceptación
 
@@ -1119,3 +1121,10 @@ búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de
   Un envío a `casa-nueva-AbC` no llega a la suscripción de `casa-nueva-abc`, y no hay
   error (`200` en ambos). Además, en iOS la entrega en segundo plano puede tardar minutos
   aunque el envío haya sido aceptado. Documentado en `docs/USAGE.md` §10.1.
+- **Pipeline**: el despliegue sincroniza `NTFY_TOPIC`/`NTFY_TOKEN` desde los secretos del
+  repositorio al Secret del clúster con un merge patch (no borra el resto de claves),
+  desactiva el paso si `ALERTS_ENABLED` no está a `true`, aborta antes de aplicar los
+  manifiestos si falta el topic, y anota el deployment con un hash del topic para
+  reiniciar el pod solo cuando cambia. Verificado con `kubectl` simulado en los cuatro
+  casos (con topic, con topic y token, sin topic, con alertas desactivadas) y con
+  `yaml.safe_load` + `bash -n`.

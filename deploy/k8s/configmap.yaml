@@ -38,7 +38,11 @@ data:
   NTFY_BASE_URL: "https://ntfy.sh"
   NTFY_PRIORITY: "3"
   ALERT_CLICK_URL: "https://oaichousefinder.duckdns.org"
-  # ALERTS_ENABLED: "true"
+  # NTFY_TOPIC y NTFY_TOKEN llegan al pod desde el Secret; el pipeline los
+  # sincroniza en cada despliegue a partir de los secretos del repositorio
+  # (NTFY_TOPIC / NTFY_TOKEN en GitHub). Con ALERTS_ENABLED=true y sin topic
+  # el arranque falla (CONFIGURATION_ERROR) y el rollout no completa.
+  ALERTS_ENABLED: "true"
 
   DEEPSEEK_BASE_URL: "https://api.deepseek.com"
   DEEPSEEK_MODEL: "deepseek-flash"
