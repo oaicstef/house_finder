@@ -8,7 +8,9 @@ Backend de un **agente de búsqueda inmobiliaria personalizada**: scrapea Ideali
 Fotocasa mediante actores de Apify, clasifica los anuncios con un LLM (DeepSeek vía SDK
 de OpenAI) y devuelve solo las viviendas que encajan con los criterios del usuario.
 Incluye una búsqueda automática diaria a las 07:00 (APScheduler) con idempotencia por
-fecha + criterio, una **UI web con fotos** y despliegue en **Kubernetes ARM64**
+fecha + criterio, **una notificación push al móvil (iPhone y Android) por cada vivienda
+nueva** respecto a la ejecución anterior, una **UI web con fotos** y despliegue en
+**Kubernetes ARM64**
 (el despliegue en el N100 con Docker Compose se mantiene como alternativa).
 
 Construido con Clean Architecture (dominio → aplicación → infraestructura/API) y SOLID.
@@ -200,6 +202,12 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 | `LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL` |
 | `ENABLE_SCHEDULER` | `true` | Activa el cron diario (07:00, `TIMEZONE`). |
 | `TIMEZONE` | `Europe/Madrid` | Zona horaria del cron. |
+| `ALERTS_ENABLED` | `false` | Activa la notificación push con las viviendas nuevas del job de las 07:00. |
+| `NTFY_BASE_URL` | `https://ntfy.sh` | Servidor ntfy (público o propio). |
+| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app del móvil. Obligatorio con `ALERTS_ENABLED=true`; llévalo al Secret, no a git. |
+| `NTFY_TOKEN` | vacío | Token, solo si el topic está protegido en el servidor ntfy. |
+| `NTFY_PRIORITY` | `3` | Prioridad de la notificación (1 mínima – 5 urgente). |
+| `ALERT_CLICK_URL` | vacío | URL que abre la notificación (vacío = la primera vivienda nueva). |
 | `SCRAPER_PROVIDERS` | `idealista=apify,fotocasa=local` | Mapa `portal=proveedor` (`local` / `idealista-api` / `apify` / `none`). Idealista API requiere acceso oficial aprobado. Los portales no listados quedan desactivados. |
 | `SCRAPER_FALLBACK_TO_APIFY` | `true` | Si la fuente local falla o no devuelve anuncios, se reintenta con Apify para ese portal. |
 | `SCRAPER_MAX_ITEMS` | `40` | Anuncios candidatos que se piden por portal. |

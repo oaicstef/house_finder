@@ -53,8 +53,14 @@ kubectl -n house-finder create secret generic house-finder-secrets \
   --from-literal=IDEALISTA_API_CLIENT_ID='...' \
   --from-literal=IDEALISTA_API_CLIENT_SECRET='...' \
   --from-literal=DEEPSEEK_API_KEY='sk-...' \
+  --from-literal=NTFY_TOPIC='casa-nueva-xxxxxxxxxxxxxxxxxxxx' \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
+
+`NTFY_TOPIC` (y `NTFY_TOKEN` si el topic está protegido) habilitan las alertas push del
+job de las 07:00. Además hay que poner `ALERTS_ENABLED: "true"` en el ConfigMap
+(`deploy/k8s/configmap.yaml`) y reiniciar el pod. Instala la app **ntfy** en el móvil y
+suscríbete al mismo topic; `ALERT_CLICK_URL` ya apunta a la UI publicada.
 
 Las credenciales `IDEALISTA_API_*` solo hacen falta si Idealista aprobó el acceso a su API
 oficial y se selecciona `idealista=idealista-api` en `SCRAPER_PROVIDERS`. No habilites ese

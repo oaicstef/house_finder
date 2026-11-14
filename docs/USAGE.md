@@ -837,6 +837,36 @@ ENABLE_SCHEDULER=false
 El job nunca propaga excepciones: cualquier fallo se registra con `logger.exception` y
 `error_code` para no perder el error.
 
+### 10.1 Alertas push de viviendas nuevas
+
+Tras cada ejecución programada se comparan los anuncios con la **ejecución programada
+anterior** del mismo perfil (por `portal + url`). Si hay viviendas nuevas se envía **una
+sola notificación resumen** vía [ntfy](https://ntfy.sh), que tiene app para **iPhone y
+Android**. La primera mañana (sin ejecución previa) avisa de todo lo encontrado.
+
+```dotenv
+ALERTS_ENABLED=true
+NTFY_BASE_URL=https://ntfy.sh
+# Elige un topic largo y difícil de adivinar; es la "dirección" de tu móvil.
+NTFY_TOPIC=casa-nueva-7f3c1a9b8d2e4f60
+# Solo si proteges el topic con token en el servidor ntfy.
+NTFY_TOKEN=
+NTFY_PRIORITY=3
+# Al tocar la notificación se abre esta URL (vacío = la primera vivienda nueva).
+ALERT_CLICK_URL=https://oaichousefinder.duckdns.org
+```
+
+1. Instala la app **ntfy** (App Store / Google Play).
+2. Suscríbete al mismo `NTFY_TOPIC`.
+3. Arranca con `ALERTS_ENABLED=true`. Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` la
+   aplicación **no arranca** (`CONFIGURATION_ERROR`), para que las alertas no fallen en
+   silencio.
+
+El mensaje incluye precio, m², habitaciones, portal, título y enlace de cada vivienda
+(hasta 10; el resto se resume en «…y N más»). Un fallo de ntfy se registra como
+`listing_alert_failed` y **no invalida la búsqueda**, que ya está guardada. En ntfy.sh un
+topic es público para quien lo conozca: usa uno largo o protege el topic con token.
+
 ## 11. Perfil de búsqueda configurable y UI
 
 El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El valor de

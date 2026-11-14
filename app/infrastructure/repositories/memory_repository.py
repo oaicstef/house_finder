@@ -80,6 +80,29 @@ class InMemoryListingRepository:
             self._results.clear()
             self._daily_index.clear()
 
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``."""
+        try:
+            async with self._lock:
+                days = [
+                    run_date
+                    for (fingerprint, run_date) in self._daily_index
+                    if fingerprint == criteria_fingerprint and run_date < before
+                ]
+                if not days:
+                    return None
+                search_id = self._daily_index[(criteria_fingerprint, max(days))]
+                return self._results.get(search_id)
+        except Exception as exc:
+            raise RepositoryException(
+                "No se ha podido recuperar la ejecución programada anterior",
+                details={"criteria_fingerprint": criteria_fingerprint},
+            ) from exc
+
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente por ``created_at``."""
         try:

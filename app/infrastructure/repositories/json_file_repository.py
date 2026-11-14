@@ -141,6 +141,23 @@ class JsonFileListingRepository:
         results.sort(key=lambda result: result.created_at, reverse=True)
         return results[:limit]
 
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``."""
+        async with self._lock:
+            days = [
+                run_date
+                for (fingerprint, run_date) in self._daily_index
+                if fingerprint == criteria_fingerprint and run_date < before
+            ]
+            if not days:
+                return None
+            search_id = self._daily_index[(criteria_fingerprint, max(days))]
+        return await self.get_by_id(search_id)
+
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente en disco; tolera ficheros corruptos intermedios."""
         recent = await self.list_recent(limit=1)

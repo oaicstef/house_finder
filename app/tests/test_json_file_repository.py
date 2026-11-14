@@ -238,3 +238,30 @@ async def test_list_recent_orders_by_modification_time(tmp_path: Path) -> None:
     recent = await repo.list_recent(limit=10)
 
     assert {item.search_id for item in recent} == {first.search_id, second.search_id}
+
+
+async def test_find_previous_scheduled_returns_the_last_run_before_a_date(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    older = build_result(run_date=date(2026, 11, 3), trigger=Trigger.SCHEDULER)
+    newest = build_result(run_date=date(2026, 11, 4), trigger=Trigger.SCHEDULER)
+    await repo.save(older)
+    await repo.save(newest)
+
+    # Un reinicio del proceso reconstruye el índice desde disco.
+    reopened = repository(tmp_path)
+
+    found = await reopened.find_previous_scheduled("fp-1", date(2026, 11, 5))
+
+    assert found is not None
+    assert found.search_id == newest.search_id
+
+
+async def test_find_previous_scheduled_ignores_manual_runs_and_today(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    manual = build_result(run_date=date(2026, 11, 4), trigger=Trigger.PROFILE)
+    today = build_result(run_date=date(2026, 11, 5), trigger=Trigger.SCHEDULER)
+    await repo.save(manual)
+    await repo.save(today)
+
+    assert await repo.find_previous_scheduled("fp-1", date(2026, 11, 5)) is None
+    assert await repo.find_previous_scheduled("otro-perfil", date(2026, 11, 5)) is None

@@ -958,3 +958,154 @@ antes de persistirse no reemplaza el último resultado exitoso.
 
 
 
+
+## Revisión 2026-11-14 — alertas push de viviendas nuevas en la búsqueda programada
+
+### Objetivo
+
+Avisar en el móvil (iPhone y Android) cuando el job diario de las 07:00 encuentra
+viviendas que no aparecían en la ejecución programada anterior. Se envía **un solo
+mensaje resumen** por ejecución, para no inundar de notificaciones al usuario.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Puerto `AlertNotifierPort` y adaptador `NtfyNotifier` (ntfy.sh o instancia propia,
+  con token opcional para topics protegidos).
+- Servicio `listing_alerts`: selección de novedades por `(portal, url)` y construcción
+  del digest (máximo 10 viviendas + «…y N más»).
+- Consulta `ListingRepository.find_previous_scheduled` en el repositorio JSON y en el
+  de memoria, incluida la reconstrucción del índice tras un reinicio.
+- Cableado en el contenedor de servicios y en `ScheduledSearchService`.
+- Configuración `ALERTS_ENABLED`, `NTFY_BASE_URL`, `NTFY_TOPIC`, `NTFY_TOKEN`,
+  `NTFY_PRIORITY` y `ALERT_CLICK_URL`, validada al arrancar.
+- Documentación (README, `docs/USAGE.md`, `.env.example`) y manifiestos de Kubernetes
+  (ConfigMap y Secret).
+
+#### Fuera del alcance (out of scope)
+
+- Alertas en búsquedas manuales o desde la UI: solo el job programado notifica.
+- Avisos de bajada de precio o de anuncios que desaparecen.
+- Historial de notificaciones enviadas, reintentos o reenvío de alertas fallidas.
+- Cambios en el contrato ni en los códigos de error de los endpoints de búsqueda.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Referencia de comparación | Última ejecución `trigger="scheduler"` del mismo perfil | Una búsqueda manual no representa «lo de ayer»: no debe silenciar novedades ni alterar la idempotencia diaria. |
+| Clave de novedad | `(portal, url)` | El mismo enlace en dos portales es una publicación distinta; los identificadores internos pueden cambiar entre ejecuciones. |
+| Formato del aviso | Un único digest (10 viviendas + resumen) | Evita una notificación por anuncio y el ruido en el móvil; el detalle completo está en la UI. |
+| Primera ejecución | Sin referencia previa todo es nuevo | Si no, la primera mañana tras desplegar el servicio no avisaría de nada. |
+| Fallo del notificador | Se registra y no invalida la búsqueda | La búsqueda ya está persistida; la alerta es un extra best-effort. |
+| Transporte | ntfy por `POST` HTTP | Apps nativas iOS y Android, sin cuenta ni credenciales de Google/Apple, y permite autoalojarlo. |
+
+### Contratos de interfaces (ports)
+
+- Nuevo `AlertNotifierPort.send_digest(*, title, message, click_url=None)`.
+- Nuevo `ListingRepository.find_previous_scheduled(criteria_fingerprint, before)`;
+  `None` si el perfil nunca se ha ejecutado de forma programada.
+- `ScheduledSearchService` acepta `notifier` y `alert_click_url` opcionales; sin
+  notificador el job funciona exactamente igual.
+
+### Modelo de datos
+
+Sin cambios en lo persistido: la referencia son los resultados `trigger="scheduler"`
+ya guardados en `data/results`. `ListingDigest` es un valor en memoria.
+
+### Configuración
+
+| Variable | Defecto | Uso |
+|---|---|---|
+| `ALERTS_ENABLED` | `false` | Activa el envío desde el job diario. |
+| `NTFY_BASE_URL` | `https://ntfy.sh` | Servidor ntfy público o propio. |
+| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app; obligatorio con alertas activas. |
+| `NTFY_TOKEN` | vacío | Token `Bearer`, solo si el topic está protegido. |
+| `NTFY_PRIORITY` | `3` | Prioridad mostrada por la app (1–5). |
+| `ALERT_CLICK_URL` | vacío | URL que abre la notificación; vacío = primera vivienda nueva. |
+
+Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` la aplicación no arranca
+(`CONFIGURATION_ERROR`): mejor fallar al desplegar que enviar alertas en silencio a
+ningún sitio. El topic se valida contra `[-_A-Za-z0-9]{1,64}`.
+
+### Flujo del job programado
+
+1. Resolver el perfil y comprobar la idempotencia del día (solo ejecuciones `scheduler`).
+2. Buscar la última ejecución programada anterior del mismo criterio; un fallo de esta
+   consulta se registra y se continúa como si no hubiera referencia.
+3. Ejecutar y persistir la búsqueda.
+4. Calcular las viviendas nuevas por `(portal, url)`; si no hay ninguna, registrar
+   `listing_alert_skipped` y terminar sin enviar nada.
+5. Construir el digest y enviarlo con el notificador; un error de envío se registra
+   (`listing_alert_failed`) y **no** cambia el resultado devuelto.
+
+### Estrategia de logging
+
+`listing_alert_sent` (con `new_count` y `total_count`), `listing_alert_skipped`,
+`listing_alert_failed` (nivel `exception`), `scheduled_search_previous_lookup_failed`,
+`alert_delivered` y `alert_delivery_failed`. Nunca se registran `NTFY_TOPIC` ni
+`NTFY_TOKEN` completos.
+
+### Jerarquía de excepciones
+
+Nueva `NotificationException` (`NOTIFICATION_FAILURE`, HTTP 502) que lanza el
+adaptador ante error de red o respuesta `>= 400`. El job la captura para no tumbar una
+búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de envío.
+
+### Plan de tests
+
+- `test_listing_alerts.py`: contenido del digest (precio con separador de miles, m²,
+  habitaciones, portal, título y URL), singular del título y novedad al cambiar de
+  portal con la misma URL.
+- `test_ntfy_notifier.py`: endpoint, cuerpo, cabeceras `Title`/`Click`/`Priority`,
+  token `Bearer`, errores HTTP y de red, y topic obligatorio.
+- `test_scheduled_search.py`: primera ejecución avisa de todo, solo lo ausente de la
+  ejecución anterior se envía, silencio cuando no hay novedades, una búsqueda manual no
+  es referencia, fallo de ntfy no rompe el job y tope de 10 viviendas.
+- Repositorios: `find_previous_scheduled` devuelve la última ejecución anterior,
+  ignora las manuales y el propio día, y sobrevive a un reinicio.
+- Configuración: alertas desactivadas por defecto, topic obligatorio y validación del
+  formato.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| En ntfy.sh cualquier persona que conozca el topic recibe y lee los mensajes | Fuga de datos de la búsqueda | Topic largo y aleatorio, o `NTFY_TOKEN` sobre topic protegido o instancia propia. |
+| La app ntfy no está suscrita y nadie ve el aviso | Cambios silenciosos | Suscripción documentada en `docs/USAGE.md`; el fallo de entrega queda en el log. |
+| ntfy caído o sin red | Sin notificación | Se registra `listing_alert_failed` y la búsqueda sigue siendo válida y visible en la UI. |
+| Un digest gigante se trunca en el móvil | Información perdida | Máximo 10 viviendas y «…y N más»; el resto se consulta en la UI. |
+
+### Orden de implementación
+
+1. [x] Puerto, excepción y adaptador ntfy — `app/domain/`, `app/infrastructure/alerts/` — con tests sin red.
+2. [x] Selección de novedades y digest — `app/application/services/listing_alerts.py` — con tests de contenido.
+3. [x] Consulta de la ejecución anterior en ambos repositorios.
+4. [x] Cableado en `ScheduledSearchService` y en el contenedor de servicios.
+5. [x] Configuración validada, documentación y manifiestos de despliegue.
+6. [x] Ejecutar pruebas y comprobaciones estáticas.
+
+### Criterios de aceptación
+
+- [x] El job diario envía un único resumen con las viviendas ausentes de la ejecución programada anterior.
+- [x] Sin ejecución previa avisa de todo lo encontrado; sin novedades no envía nada.
+- [x] Una búsqueda manual no cuenta como referencia ni silencia el aviso.
+- [x] Un fallo de ntfy se registra y no invalida la búsqueda guardada.
+- [x] Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` el arranque falla con error de configuración.
+- [x] Las pruebas focalizadas y la suite completa pasan.
+
+### Checklist de progreso
+
+- [x] 1. Adaptador ntfy y su puerto.
+- [x] 2. Digest de viviendas nuevas.
+- [x] 3. Referencia de la ejecución programada anterior.
+- [x] 4. Integración en el job diario.
+- [x] 5. Configuración, documentación y despliegue.
+- [x] 6. Validación final.
+
+### Evidencia de esta revisión
+
+- `pytest -q`: 334 tests pasaron (incluye `test_listing_alerts.py` y `test_ntfy_notifier.py`).
+- `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
+- `GET https://ntfy.sh/v1/health` → `{"healthy":true,"role":"active"}` desde la Pi.

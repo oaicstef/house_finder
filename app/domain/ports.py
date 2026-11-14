@@ -20,6 +20,7 @@ from app.domain.models import (
 )
 
 __all__ = [
+    "AlertNotifierPort",
     "ClassifierPort",
     "ListingRepository",
     "PostalCodeLocatorPort",
@@ -97,6 +98,19 @@ class ListingRepository(Protocol):
         """Búsqueda más reciente guardada; ``None`` si no hay ninguna."""
         ...
 
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``.
+
+        Es la referencia para decidir qué anuncios son nuevos en el job diario.
+        ``None`` si el criterio nunca se ha ejecutado de forma programada.
+        """
+        ...
+
+
 @runtime_checkable
 class SearchProfileStore(Protocol):
     """Persistencia del perfil de búsqueda editado por el usuario.
@@ -119,6 +133,25 @@ class SearchProfileStore(Protocol):
 
     async def clear(self) -> None:
         """Borra el perfil guardado (idempotente)."""
+        ...
+
+
+@runtime_checkable
+class AlertNotifierPort(Protocol):
+    """Entrega de alertas push al móvil (un mensaje resumen por ejecución)."""
+
+    async def send_digest(
+        self,
+        *,
+        title: str,
+        message: str,
+        click_url: str | None = None,
+    ) -> None:
+        """Envía el resumen.
+
+        Raises:
+            NotificationException: si el servicio de notificaciones falla.
+        """
         ...
 
 

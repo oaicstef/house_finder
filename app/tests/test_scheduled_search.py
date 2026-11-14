@@ -14,6 +14,7 @@ from app.infrastructure.repositories.memory_repository import InMemoryListingRep
 from app.tests.conftest import (
     ExplodingRepository,
     FakeClassifier,
+    FakeNotifier,
     FakeScraper,
     RecordingLogger,
     make_listing,
@@ -33,6 +34,8 @@ def build(
     scraper: FakeScraper | None = None,
     repository: InMemoryListingRepository | None = None,
     clock: MutableClock | None = None,
+    notifier: FakeNotifier | None = None,
+    alert_click_url: str | None = None,
 ) -> tuple[ScheduledSearchService, FakeScraper, RecordingLogger]:
     clock = clock or MutableClock(date(2026, 11, 4))
     repository = repository or InMemoryListingRepository(logger=RecordingLogger())
@@ -49,6 +52,8 @@ def build(
         search_service,
         repository,
         SearchCriteria(location="Madrid"),
+        notifier=notifier,
+        alert_click_url=alert_click_url,
         logger=logger,
         today=clock,
     )
@@ -134,3 +139,121 @@ async def test_scheduler_entrypoint_swallows_unexpected_errors() -> None:
     unexpected = logger.find("scheduled_search_entrypoint_failure")
     assert unexpected is not None
     assert unexpected["level"] == "exception"
+
+
+async def test_first_run_alerts_every_listing() -> None:
+    notifier = FakeNotifier()
+    service, _, _ = build(
+        scraper=FakeScraper([make_listing(url="https://p/1"), make_listing(url="https://p/2")]),
+        notifier=notifier,
+    )
+
+    await service.run_daily_job()
+
+    assert len(notifier.digests) == 1, "una sola notificación resumen"
+    digest = notifier.digests[0]
+    assert digest["title"] == "2 viviendas nuevas \u2014 Madrid"
+    assert "https://p/1" in digest["message"]
+    assert "https://p/2" in digest["message"]
+    assert digest["click_url"] == "https://p/1"
+
+
+async def test_daily_job_alerts_only_listings_absent_from_the_previous_run() -> None:
+    clock = MutableClock(date(2026, 11, 4))
+    notifier = FakeNotifier()
+    scraper = FakeScraper(
+        [make_listing(url="https://p/1"), make_listing(url="https://p/2")]
+    )
+    service, _, _ = build(scraper=scraper, clock=clock, notifier=notifier)
+
+    await service.run_daily_job()
+
+    clock.current = date(2026, 11, 5)
+    scraper.listings = [
+        make_listing(url="https://p/1"),
+        make_listing(url="https://p/3", title="Chalet nuevo"),
+    ]
+    await service.run_daily_job()
+
+    assert len(notifier.digests) == 2
+    digest = notifier.digests[1]
+    assert digest["title"] == "1 vivienda nueva \u2014 Madrid"
+    assert "https://p/3" in digest["message"]
+    assert "https://p/1" not in digest["message"], "la vivienda de ayer no es nueva"
+    assert digest["click_url"] == "https://p/3"
+
+
+async def test_daily_job_stays_silent_when_nothing_is_new() -> None:
+    clock = MutableClock(date(2026, 11, 4))
+    notifier = FakeNotifier()
+    service, _, logger = build(clock=clock, notifier=notifier)
+
+    await service.run_daily_job()
+    clock.current = date(2026, 11, 5)
+    await service.run_daily_job()
+
+    assert len(notifier.digests) == 1, "solo la primera mañana avisa"
+    assert logger.find("listing_alert_skipped") is not None
+
+
+async def test_a_manual_run_does_not_become_the_reference_for_new_listings() -> None:
+    clock = MutableClock(date(2026, 11, 4))
+    repository = InMemoryListingRepository(logger=RecordingLogger())
+    scraper = FakeScraper([make_listing(url="https://p/1")])
+    search_service = SearchService(
+        scraper,
+        FakeClassifier(),
+        repository,
+        logger=RecordingLogger(),
+        today=clock,
+    )
+    await search_service.run_search(SearchCriteria(location="Madrid"), trigger=Trigger.PROFILE.value)
+
+    notifier = FakeNotifier()
+    scheduled = ScheduledSearchService(
+        search_service,
+        repository,
+        SearchCriteria(location="Madrid"),
+        notifier=notifier,
+        logger=RecordingLogger(),
+        today=clock,
+    )
+    await scheduled.run_daily_job()
+
+    assert len(notifier.digests) == 1
+    assert "https://p/1" in notifier.digests[0]["message"]
+
+
+async def test_a_failed_alert_does_not_break_the_daily_job() -> None:
+    notifier = FakeNotifier(error=RuntimeError("ntfy caído"))
+    service, _, logger = build(notifier=notifier)
+
+    result = await service.run_daily_job()
+
+    assert result is not None, "la búsqueda ya está guardada y se devuelve igual"
+    failed = logger.find("listing_alert_failed")
+    assert failed is not None
+    assert failed["level"] == "exception"
+    assert failed["error_code"] == "NOTIFICATION_FAILURE"
+
+
+async def test_configured_dashboard_url_is_the_notification_target() -> None:
+    notifier = FakeNotifier()
+    service, _, _ = build(notifier=notifier, alert_click_url="https://oaichousefinder.example/")
+
+    await service.run_daily_job()
+
+    assert notifier.digests[0]["click_url"] == "https://oaichousefinder.example/"
+
+
+async def test_the_digest_caps_the_listing_blocks() -> None:
+    listings = [make_listing(url=f"https://p/{index}") for index in range(15)]
+    notifier = FakeNotifier()
+    service, _, _ = build(scraper=FakeScraper(listings), notifier=notifier)
+
+    await service.run_daily_job()
+
+    digest = notifier.digests[0]
+    assert digest["title"].startswith("15 viviendas nuevas")
+    assert digest["message"].count("https://p/") == 10
+    assert digest["message"].endswith("\u2026y 5 m\u00e1s.")

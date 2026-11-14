@@ -32,6 +32,14 @@ data:
   GEOCODING_BASE_URL: "https://www.cartociudad.es/geocoder/api/geocoder"
   GEOCODING_TIMEOUT_SECONDS: "10"
 
+  # Alertas push (ntfy) de viviendas nuevas del job de las 07:00.
+  # NTFY_TOPIC y NTFY_TOKEN van en el Secret (no en git). Activa ALERTS_ENABLED
+  # aquí y define ALERT_CLICK_URL para que la notificación abra la UI.
+  NTFY_BASE_URL: "https://ntfy.sh"
+  NTFY_PRIORITY: "3"
+  ALERT_CLICK_URL: "https://oaichousefinder.duckdns.org"
+  # ALERTS_ENABLED: "true"
+
   DEEPSEEK_BASE_URL: "https://api.deepseek.com"
   DEEPSEEK_MODEL: "deepseek-flash"
   DEEPSEEK_TIMEOUT_SECONDS: "60"
