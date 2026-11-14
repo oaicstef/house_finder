@@ -20,6 +20,7 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 | Documento | Contenido |
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | Guía de uso: tokens, actores de Apify, recetas `curl`, cliente Python, errores y resolución de problemas. |
+| [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | Mapa de infraestructura: dónde corre el clúster, pipeline, secretos, verificación y puntos frágiles. **Léelo antes de tocar despliegue o configuración.** |
 | [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md) | Especificación técnica: ports, modelo de datos, flujo del job, excepciones y riesgos. |
 | [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
 | [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
@@ -94,6 +95,7 @@ app/
 └── tests/                   # pytest + pytest-asyncio (sin APIs reales)
 deploy/k8s/                  # Namespace, ConfigMap, PVC, Deployment ARM64, Service
 deploy/n100/                 # Alternativa: Docker Compose para el N100
+docs/INFRASTRUCTURE.md       # dónde corre cada cosa: clúster, pipeline, secretos
 Dockerfile                   # imagen multi-arch (python:3.13-slim)
 specs/                       # planes por feature (skill plan-first)
 ```
