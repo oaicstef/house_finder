@@ -867,6 +867,36 @@ El mensaje incluye precio, m², habitaciones, portal, título y enlace de cada v
 `listing_alert_failed` y **no invalida la búsqueda**, que ya está guardada. En ntfy.sh un
 topic es público para quien lo conozca: usa uno largo o protege el topic con token.
 
+#### Comprobar la entrega antes de esperar al cron
+
+```bash
+# 1. Ver lo que hay en el topic (no requiere la app):
+curl -s "https://ntfy.sh/TU_TOPIC/json?poll=1&since=all"
+
+# 2. Disparar el job diario ahora mismo:
+curl -X POST https://oaichousefinder.duckdns.org/api/v1/scheduled-searches/run
+```
+
+Si el job ya se ejecutó hoy devuelve `{"executed": false, "reason":
+"already_executed_today"}`: espera al día siguiente o elimina el resultado
+`trigger="scheduler"` del día antes de reintentar.
+
+#### Si el móvil no muestra la notificación
+
+- **El topic distingue mayúsculas de minúsculas.** `casa-nueva-AbC` y `casa-nueva-abc`
+  son dos topics distintos, y un mensaje enviado a uno no aparece en el otro. Copia el
+  valor de `NTFY_TOPIC` con el mismo uso de mayúsculas en la app; escríbelo pegándolo, no
+  a mano (el teclado de iOS capitaliza la primera letra).
+- **Usa un topic en minúsculas** si lo vas a teclear: evita el problema anterior.
+- En la app, junto al topic debe aparecer **(instant)**; si dice *polling*, la entrega en
+  segundo plano llega con retraso. Comprueba también Ajustes de iOS → Notificaciones →
+  ntfy → Permitir notificaciones.
+- Comprueba primero en el navegador del móvil (`https://ntfy.sh/TU_TOPIC`): si ahí sí
+  aparecen los mensajes, el servidor y el topic son correctos y el problema está en la
+  app o en los permisos del sistema.
+- Si el servidor respondió `200` (`alert_delivered` en el log) el mensaje **salió**; un
+  retraso de minutos en iPhone es normal cuando la app está en segundo plano.
+
 ## 11. Perfil de búsqueda configurable y UI
 
 El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El valor de

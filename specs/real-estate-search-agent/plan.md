@@ -1076,6 +1076,7 @@ búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de
 | La app ntfy no está suscrita y nadie ve el aviso | Cambios silenciosos | Suscripción documentada en `docs/USAGE.md`; el fallo de entrega queda en el log. |
 | ntfy caído o sin red | Sin notificación | Se registra `listing_alert_failed` y la búsqueda sigue siendo válida y visible en la UI. |
 | Un digest gigante se trunca en el móvil | Información perdida | Máximo 10 viviendas y «…y N más»; el resto se consulta en la UI. |
+| El topic de la app no coincide con `NTFY_TOPIC` (mayúsculas) | No llega nada y el envío responde `200` | Usar un topic en minúsculas y pegarlo en la app; verificado en `docs/USAGE.md` §10.1. |
 
 ### Orden de implementación
 
@@ -1109,3 +1110,12 @@ búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de
 - `pytest -q`: 334 tests pasaron (incluye `test_listing_alerts.py` y `test_ntfy_notifier.py`).
 - `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
 - `GET https://ntfy.sh/v1/health` → `{"healthy":true,"role":"active"}` desde la Pi.
+- **Entrega real verificada** el 2026-11-14 con el adaptador de producción y un topic
+  privado: `alert_delivered service=ntfy status_code=200`, y el mensaje recuperado del
+  servidor con `GET https://ntfy.sh/<topic>/json?poll=1&since=all` (título transliterado a
+  ASCII, cuerpo UTF-8 con €, · y m² intactos, `Priority`, `Tags` y `Click` correctos).
+  Recibido en el iPhone.
+- **Aprendizaje operativo**: los topics de ntfy **distinguen mayúsculas de minúsculas**.
+  Un envío a `casa-nueva-AbC` no llega a la suscripción de `casa-nueva-abc`, y no hay
+  error (`200` en ambos). Además, en iOS la entrega en segundo plano puede tardar minutos
+  aunque el envío haya sido aceptado. Documentado en `docs/USAGE.md` §10.1.
