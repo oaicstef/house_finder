@@ -841,5 +841,120 @@ Sin cambios: valores no reconocidos se normalizan a `null`, no son errores de ne
 - `pytest -q`: suite completa en verde.
 - `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
 
+## Revisión 2026-11-12 — diagnóstico de ejecuciones y resultados obsoletos
+
+### Objetivo
+
+Corregir la idempotencia para que una búsqueda manual no cancele el cron diario y hacer
+observable si APScheduler está activo y cuándo ejecutará de nuevo. Si una búsqueda falla
+con `503` antes de persistirse, la UI conservará el último resultado correcto en lugar de
+vaciarlo, dejando visible que los anuncios mostrados no proceden del intento fallido.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Hacer que la consulta de idempotencia del job diario solo encuentre ejecuciones con
+  `trigger="scheduler"`.
+- Añadir al endpoint `/health` el estado real del scheduler y la hora de su próxima
+  ejecución; mantener `scheduler_enabled` por compatibilidad.
+- Conservar los resultados ya mostrados mientras se ejecuta una búsqueda y ante un error.
+- Añadir pruebas que reproduzcan los casos anteriores.
+
+#### Fuera del alcance (out of scope)
+
+- Ejecutar o modificar el despliegue remoto, las credenciales o la configuración del
+  clúster.
+- Reintentar automáticamente búsquedas fallidas o clasificaciones `503`; no se conoce
+  todavía si el fallo viene del proveedor LLM, de la red o del Ingress.
+- Guardar resultados parciales sin clasificar ni cambiar el contrato de búsqueda.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Idempotencia diaria | Ignorar búsquedas con trigger distinto de `scheduler` | Una ejecución manual de los mismos criterios no debe suprimir el cron. |
+| Estado del scheduler | Exponer `scheduler_running` y `next_run_time` desde `/health` | `scheduler_enabled` solo indica configuración y no acredita que el job esté vivo. |
+| Fallo durante búsqueda | Mantener el último resultado renderizado y su fecha | El servicio solo persiste búsquedas completas; no presentar una vista vacía como si fuese el resultado nuevo. |
+
+### Contratos de interfaces (ports)
+
+Sin cambios en los métodos públicos de los ports. `ListingRepository.find_by_criteria_and_day`
+se precisa como consulta de ejecuciones programadas, no de búsquedas manuales.
+
+### Modelo de datos
+
+Sin cambios en entidades ni datos persistidos. `HealthResponse` añade
+`scheduler_running: bool` y `next_run_time: datetime | None`.
+
+### Endpoints de la API
+
+`GET /health` conserva `200` y los campos existentes, añadiendo el estado del scheduler y
+la hora ISO-8601 de la próxima ejecución (o `null` si no hay job activo). No se cambian
+los endpoints de búsqueda ni sus códigos de error.
+
+### Flujo del job programado
+
+1. Consultar si ya existe un resultado `trigger="scheduler"` para los criterios y fecha.
+2. Si existe, registrar el duplicado y terminar; resultados `api` o `profile` no bloquean
+   el cron.
+3. En otro caso, ejecutar y persistir la búsqueda como hasta ahora.
+4. El healthcheck informa si el scheduler está activo y su próxima ejecución; un error
+   del proveedor sigue quedando registrado y no se convierte en resultado exitoso.
+
+### Estrategia de logging
+
+Sin cambios. Se mantienen los eventos existentes del job y los campos de contexto; no se
+registran credenciales ni datos de contacto.
+
+### Jerarquía de excepciones
+
+Sin cambios. `ClassifierException` continúa respondiendo `503`; una búsqueda que falla
+antes de persistirse no reemplaza el último resultado exitoso.
+
+### Plan de tests
+
+- Repositorios JSON y en memoria: una búsqueda `profile` con los mismos criterios/fecha
+  no se considera ejecución programada; una búsqueda `scheduler` sí es duplicado.
+- Servicio programado: prueba de regresión para la búsqueda manual previa al cron.
+- API: `/health` informa scheduler inactivo y ausencia de próxima ejecución cuando está
+  deshabilitado, y el estado configurado cuando está activo.
+- UI: verificación sintáctica y prueba existente/de navegador si está disponible; no
+  borrar la vista anterior al iniciar ni al fallar una búsqueda.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El `503` proviene del proveedor LLM o de la infraestructura externa | No se guarda una búsqueda nueva | Conservar y fechar claramente el último resultado; obtener el `request_id` para investigar logs sin afirmar una causa no verificada. |
+| El scheduler está configurado pero su job no se registra | El cron no se ejecuta | Exponer `scheduler_running` y `next_run_time` en `/health`. |
+| Cambio accidental en idempotencia | Duplicar el coste de ejecuciones programadas | Seguir omitiendo los resultados `scheduler` del mismo día y cubrirlo con tests de ambos repositorios. |
+
+### Orden de implementación
+
+1. [x] Corregir la consulta de idempotencia — `app/infrastructure/repositories/`, tests — una ejecución `profile` no bloquea el cron y una `scheduler` sí.
+2. [x] Exponer estado del job — `app/api/routes.py`, `app/api/schemas.py`, tests — health refleja actividad y próxima ejecución.
+3. [x] Conservar la vista previa — `app/web/app.js` — iniciar/fallar una búsqueda no borra los anuncios anteriores.
+4. [ ] Ejecutar pruebas focalizadas y comprobaciones — criterios de aceptación basados en resultados reales.
+
+### Criterios de aceptación
+
+- [x] Una búsqueda manual del día no impide la ejecución programada; una ejecución programada previa sí conserva la idempotencia.
+- [x] `/health` diferencia scheduler habilitado de scheduler activo y devuelve su próxima ejecución si existe.
+- [x] Un intento fallido no se presenta como un nuevo conjunto de resultados ni elimina el último resultado visible.
+- [x] Las pruebas focalizadas pasan.
+
+### Checklist de progreso
+
+- [x] 1. Corregir la consulta de idempotencia y cubrirla con pruebas.
+- [x] 2. Exponer el estado del scheduler en el healthcheck.
+- [x] 3. Conservar los últimos resultados visibles durante búsquedas fallidas.
+- [x] 4. Validar las pruebas y comprobaciones acordadas.
+
+### Evidencia de esta revisión
+
+- `pytest -q`: 312 tests pasaron.
+- `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
+
 
 

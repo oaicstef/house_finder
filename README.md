@@ -116,7 +116,7 @@ uvicorn app.main:app --reload
 - **UI con fotos**: <http://127.0.0.1:8000/> (criterios editables, última búsqueda
   guardada y botón «Ejecutar búsqueda»)
 - Documentación interactiva: <http://127.0.0.1:8000/docs>
-- Health check: `GET /health`
+- Health check: `GET /health` (incluye estado y próxima ejecución del scheduler)
 
 Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 `ConfigurationException` (`CONFIGURATION_ERROR`), nunca con un `KeyError`.

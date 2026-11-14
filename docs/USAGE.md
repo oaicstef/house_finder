@@ -323,8 +323,11 @@ Comprueba que está vivo:
 
 ```bash
 curl http://127.0.0.1:8000/health
-# {"status":"ok","scheduler_enabled":true}
+# {"status":"ok","scheduler_enabled":true,"scheduler_running":true,"next_run_time":"..."}
 ```
+
+`scheduler_enabled` indica la configuración; `scheduler_running` y `next_run_time`
+permiten comprobar si el job diario está registrado y cuándo volverá a ejecutarse.
 
 ## 6. Recetas con curl
 

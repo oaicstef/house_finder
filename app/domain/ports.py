@@ -90,13 +90,12 @@ class ListingRepository(Protocol):
         criteria_fingerprint: str,
         run_date: date,
     ) -> SearchResult | None:
-        """Soporte de idempotencia del job diario: ``None`` si no hay ejecución."""
+        """Devuelve una ejecución programada previa para el criterio y la fecha."""
         ...
 
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente guardada; ``None`` si no hay ninguna."""
         ...
-
 
 @runtime_checkable
 class SearchProfileStore(Protocol):

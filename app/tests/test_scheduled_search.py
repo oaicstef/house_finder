@@ -9,7 +9,7 @@ import pytest
 from app.application.services.scheduled_search import ScheduledSearchService
 from app.application.services.search_service import SearchService
 from app.domain.exceptions import ScraperException
-from app.domain.models import SearchCriteria
+from app.domain.models import SearchCriteria, Trigger
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
 from app.tests.conftest import (
     ExplodingRepository,
@@ -77,6 +77,33 @@ async def test_daily_job_runs_again_on_a_new_day() -> None:
     assert await service.run_daily_job() is not None
     clock.current = date(2026, 11, 5)
     assert await service.run_daily_job() is not None
+    assert len(scraper.calls) == 2
+
+
+async def test_manual_search_does_not_suppress_daily_job() -> None:
+    clock = MutableClock(date(2026, 11, 4))
+    repository = InMemoryListingRepository(logger=RecordingLogger())
+    scraper = FakeScraper([make_listing()])
+    search_service = SearchService(
+        scraper,
+        FakeClassifier(),
+        repository,
+        logger=RecordingLogger(),
+        today=clock,
+    )
+    criteria = SearchCriteria(location="Madrid")
+
+    await search_service.run_search(criteria, trigger=Trigger.PROFILE.value)
+    scheduled = ScheduledSearchService(
+        search_service,
+        repository,
+        criteria,
+        today=clock,
+    )
+    result = await scheduled.run_daily_job()
+
+    assert result is not None
+    assert result.trigger is Trigger.SCHEDULER
     assert len(scraper.calls) == 2
 
 

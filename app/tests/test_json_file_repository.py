@@ -150,7 +150,7 @@ async def test_results_survive_a_restart(tmp_path: Path) -> None:
 async def test_daily_idempotency_survives_a_restart(tmp_path: Path) -> None:
     """El job diario no debe repetir una búsqueda ya hecha antes del reinicio."""
     first = repository(tmp_path)
-    result = build_result(fingerprint="fp-daily")
+    result = build_result(fingerprint="fp-daily", trigger=Trigger.SCHEDULER)
     await first.save(result)
 
     second = repository(tmp_path)
@@ -159,6 +159,23 @@ async def test_daily_idempotency_survives_a_restart(tmp_path: Path) -> None:
     assert found is not None
     assert found.search_id == result.search_id
     assert await second.find_by_criteria_and_day("fp-daily", date(2026, 11, 6)) is None
+
+
+async def test_manual_result_does_not_block_daily_idempotency_after_restart(
+    tmp_path: Path,
+) -> None:
+    first = repository(tmp_path)
+    manual = build_result(fingerprint="fp-daily", trigger=Trigger.PROFILE)
+    await first.save(manual)
+
+    second = repository(tmp_path)
+    assert await second.find_by_criteria_and_day("fp-daily", manual.run_date) is None
+
+    scheduled = build_result(fingerprint="fp-daily", trigger=Trigger.SCHEDULER)
+    await second.save(scheduled)
+    found = await second.find_by_criteria_and_day("fp-daily", scheduled.run_date)
+    assert found is not None
+    assert found.search_id == scheduled.search_id
 
 
 async def test_saving_same_search_id_is_idempotent(tmp_path: Path) -> None:

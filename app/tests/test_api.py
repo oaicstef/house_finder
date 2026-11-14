@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import ServiceContainer
+from app.config import Settings
 from app.domain.exceptions import ScraperException
 from app.main import create_app
 from app.tests.conftest import FakeClassifier, FakeScraper, make_listing
@@ -153,4 +154,23 @@ def test_health_endpoint(make_container: Any) -> None:
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "scheduler_enabled": False}
+    assert response.json() == {
+        "status": "ok",
+        "scheduler_enabled": False,
+        "scheduler_running": False,
+        "next_run_time": None,
+    }
+
+
+def test_health_endpoint_reports_active_scheduler(make_container: Any) -> None:
+    container = make_container()
+    container.settings = Settings(environment="test", enable_scheduler=True)
+
+    with make_client(container) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["scheduler_enabled"] is True
+    assert body["scheduler_running"] is True
+    assert body["next_run_time"] is not None

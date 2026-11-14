@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Path, status
+from fastapi import APIRouter, Path, Request, status
 
 from app.api.dependencies import (
     ContainerDep,
@@ -25,6 +25,7 @@ from app.api.schemas import (
     SearchProfileResponse,
     SearchResponse,
 )
+from app.application.services.scheduled_search import SCHEDULED_JOB_ID
 from app.domain.models import Trigger
 
 __all__ = ["health_router", "router"]
@@ -159,5 +160,13 @@ async def run_scheduled_search(
 
 
 @health_router.get("/health", response_model=HealthResponse, tags=["health"])
-async def health(container: ContainerDep) -> HealthResponse:
-    return HealthResponse(status="ok", scheduler_enabled=container.settings.enable_scheduler)
+async def health(request: Request, container: ContainerDep) -> HealthResponse:
+    scheduler = getattr(request.app.state, "scheduler", None)
+    scheduler_running = bool(scheduler is not None and scheduler.running)
+    job = scheduler.get_job(SCHEDULED_JOB_ID) if scheduler_running else None
+    return HealthResponse(
+        status="ok",
+        scheduler_enabled=container.settings.enable_scheduler,
+        scheduler_running=scheduler_running,
+        next_run_time=job.next_run_time if job is not None else None,
+    )

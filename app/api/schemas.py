@@ -440,6 +440,8 @@ class SearchProfileResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     scheduler_enabled: bool
+    scheduler_running: bool
+    next_run_time: datetime | None
 
 
 class ErrorDetail(BaseModel):
