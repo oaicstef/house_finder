@@ -46,12 +46,11 @@ data:
 
   # Correo opt-in. Al activarlo, define EMAIL_SMTP_HOST aquí y los secretos
   # EMAIL_FROM / EMAIL_TO (y credenciales SMTP si el servidor las exige) en GitHub.
-  EMAIL_ALERTS_ENABLED: "false"
-  EMAIL_SMTP_HOST: ""
+  EMAIL_ALERTS_ENABLED: "true"
+  EMAIL_SMTP_HOST: "smtp.gmail.com"
   EMAIL_SMTP_PORT: "587"
   EMAIL_SMTP_STARTTLS: "true"
   EMAIL_SMTP_TIMEOUT_SECONDS: "15"
-
   DEEPSEEK_BASE_URL: "https://api.deepseek.com"
   DEEPSEEK_MODEL: "deepseek-flash"
   DEEPSEEK_TIMEOUT_SECONDS: "60"
