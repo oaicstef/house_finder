@@ -132,6 +132,20 @@ class Settings(BaseSettings):
     #: Certificado energético mínimo del cron ("B" = B o mejor; vacío = sin filtro).
     daily_max_energy_rating: str | None = Field(default=None, pattern=r"^[A-Ga-g]$")
 
+    # --- Alertas push de viviendas nuevas (app ntfy: iPhone y Android) ------
+    #: Con ``false`` el job diario funciona igual, pero sin enviar notificaciones.
+    alerts_enabled: bool = False
+    #: Instancia de ntfy; ``https://ntfy.sh`` sirve para uso personal.
+    ntfy_base_url: str = "https://ntfy.sh"
+    #: Topic al que se suscribe la app móvil (largo y privado).
+    ntfy_topic: str = ""
+    #: Token de acceso, solo si el topic está protegido en el servidor ntfy.
+    ntfy_token: str | None = None
+    #: 1 (mínima) a 5 (urgente); ntfy la muestra como prioridad de la notificación.
+    ntfy_priority: int = Field(default=3, ge=1, le=5)
+    #: URL que abre la notificación al tocarla (vacío = la primera vivienda nueva).
+    alert_click_url: str | None = None
+
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
     results_dir: str = "data/results"
@@ -157,6 +171,8 @@ class Settings(BaseSettings):
         "daily_radius_km",
         "daily_min_year_built",
         "daily_max_energy_rating",
+        "ntfy_token",
+        "alert_click_url",
         "search_profile_json",
         "search_profile_file",
         mode="before",
@@ -173,14 +189,37 @@ class Settings(BaseSettings):
     def _upper_energy_rating(cls, value: str | None) -> str | None:
         return value.upper() if value else value
 
-    @field_validator("geocoding_base_url")
+    @field_validator("ntfy_topic")
     @classmethod
-    def _check_geocoding_base_url(cls, value: str) -> str:
-        """El geocodificador no puede quedar sin URL."""
+    def _validate_ntfy_topic(cls, value: str) -> str:
+        """Los topics de ntfy solo admiten ``[-_A-Za-z0-9]`` hasta 64 caracteres."""
+        topic = (value or "").strip()
+        if not topic:
+            return topic
+        if not re.fullmatch(r"[-_A-Za-z0-9]{1,64}", topic):
+            raise ValueError(
+                "NTFY_TOPIC solo admite letras, números, '-' y '_' (máx. 64)"
+            )
+        return topic
+
+    @field_validator("geocoding_base_url", "ntfy_base_url")
+    @classmethod
+    def _check_service_base_url(cls, value: str, info: Any) -> str:
+        """Ni el geocodificador ni ntfy pueden quedar sin URL."""
         stripped = value.strip()
         if not stripped:
-            raise ValueError("GEOCODING_BASE_URL no puede estar vacío")
+            raise ValueError(f"{info.field_name.upper()} no puede estar vacío")
         return stripped
+
+    @model_validator(mode="after")
+    def _validate_alerts(self) -> "Settings":
+        """Con alertas activas, el topic es obligatorio: mejor fallar al arrancar."""
+        if self.alerts_enabled and not (self.ntfy_topic or "").strip():
+            raise ConfigurationException(
+                "ALERTS_ENABLED=true requiere NTFY_TOPIC",
+                details={"missing": ["NTFY_TOPIC"]},
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_required_secrets(self) -> "Settings":

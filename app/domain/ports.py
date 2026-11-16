@@ -20,6 +20,7 @@ from app.domain.models import (
 )
 
 __all__ = [
+    "AlertNotifierPort",
     "ClassifierPort",
     "ListingRepository",
     "PostalCodeLocatorPort",
@@ -90,11 +91,23 @@ class ListingRepository(Protocol):
         criteria_fingerprint: str,
         run_date: date,
     ) -> SearchResult | None:
-        """Soporte de idempotencia del job diario: ``None`` si no hay ejecución."""
+        """Devuelve una ejecución programada previa para el criterio y la fecha."""
         ...
 
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente guardada; ``None`` si no hay ninguna."""
+        ...
+
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``.
+
+        Es la referencia para decidir qué anuncios son nuevos en el job diario.
+        ``None`` si el criterio nunca se ha ejecutado de forma programada.
+        """
         ...
 
 
@@ -120,6 +133,25 @@ class SearchProfileStore(Protocol):
 
     async def clear(self) -> None:
         """Borra el perfil guardado (idempotente)."""
+        ...
+
+
+@runtime_checkable
+class AlertNotifierPort(Protocol):
+    """Entrega de alertas push al móvil (un mensaje resumen por ejecución)."""
+
+    async def send_digest(
+        self,
+        *,
+        title: str,
+        message: str,
+        click_url: str | None = None,
+    ) -> None:
+        """Envía el resumen.
+
+        Raises:
+            NotificationException: si el servicio de notificaciones falla.
+        """
         ...
 
 

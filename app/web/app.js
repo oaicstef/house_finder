@@ -465,8 +465,6 @@ async function runSearch(event) {
   runButton.disabled = true;
   runButton.textContent = "Buscando…";
   setStatus("Ejecutando la búsqueda en los portales. Puede tardar un minuto…");
-  summaryBox.hidden = true;
-  resultsBox.replaceChildren();
 
   try {
     const response = await fetch(`${API}/search-profile/run`, { method: "POST" });
@@ -485,7 +483,10 @@ async function runSearch(event) {
         : "",
     );
   } catch (error) {
-    setStatus(error.message, true);
+    const message = latestNote.hidden
+      ? error.message
+      : `${error.message} Se mantienen los resultados de la última búsqueda guardada.`;
+    setStatus(message, true);
   } finally {
     runButton.disabled = false;
     runButton.textContent = "Ejecutar búsqueda";

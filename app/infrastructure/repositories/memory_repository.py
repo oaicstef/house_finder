@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from app.domain.exceptions import RepositoryException
-from app.domain.models import SearchResult
+from app.domain.models import SearchResult, Trigger
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["InMemoryListingRepository"]
@@ -32,11 +32,11 @@ class InMemoryListingRepository:
         try:
             async with self._lock:
                 self._results[result.search_id] = result
-                # El primer resultado del día es el que manda para la idempotencia.
-                self._daily_index.setdefault(
-                    (result.criteria_fingerprint, result.run_date),
-                    result.search_id,
-                )
+                if result.trigger is Trigger.SCHEDULER:
+                    self._daily_index.setdefault(
+                        (result.criteria_fingerprint, result.run_date),
+                        result.search_id,
+                    )
         except Exception as exc:  # frontera de persistencia: se traduce a dominio
             raise RepositoryException(
                 "No se ha podido guardar el resultado de la búsqueda",
@@ -79,6 +79,29 @@ class InMemoryListingRepository:
         async with self._lock:
             self._results.clear()
             self._daily_index.clear()
+
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``."""
+        try:
+            async with self._lock:
+                days = [
+                    run_date
+                    for (fingerprint, run_date) in self._daily_index
+                    if fingerprint == criteria_fingerprint and run_date < before
+                ]
+                if not days:
+                    return None
+                search_id = self._daily_index[(criteria_fingerprint, max(days))]
+                return self._results.get(search_id)
+        except Exception as exc:
+            raise RepositoryException(
+                "No se ha podido recuperar la ejecución programada anterior",
+                details={"criteria_fingerprint": criteria_fingerprint},
+            ) from exc
 
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente por ``created_at``."""

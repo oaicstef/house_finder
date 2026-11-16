@@ -56,6 +56,37 @@ kubectl -n house-finder create secret generic house-finder-secrets \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
+### Alertas push (ntfy)
+
+`ALERTS_ENABLED` está activado en el ConfigMap (`deploy/k8s/configmap.yaml`), así que el
+topic es obligatorio: con alertas activas y sin `NTFY_TOPIC` el pod **no arranca**
+(`CONFIGURATION_ERROR`) y el rollout falla, para que las notificaciones no se pierdan en
+silencio.
+
+El topic es un secreto: **no se versiona**. Se guarda en el repositorio de GitHub
+(*Settings → Secrets and variables → Actions*):
+
+| Secreto del repositorio | Obligatorio | Uso |
+|---|---|---|
+| `NTFY_TOPIC` | sí (con alertas activas) | Topic al que está suscrita la app del móvil. |
+| `NTFY_TOKEN` | no | Token `Bearer`, solo si el topic está protegido en el servidor ntfy. |
+
+En cada despliegue el pipeline escribe esos valores en el Secret `house-finder-secrets`
+con `kubectl patch --type merge`, de modo que **no borra** `APIFY_TOKEN`,
+`DEEPSEEK_API_KEY` ni el resto. No hace falta ningún `kubectl` manual: basta con
+`git push` a `main` (o lanzar el workflow a mano con *Run workflow*).
+
+Si `ALERTS_ENABLED` vuelve a `"false"`, el paso se salta y no toca los secretos. Si está
+a `"true"` y falta `NTFY_TOPIC`, el pipeline se detiene **antes** de aplicar los manifiestos
+con un error explícito.
+
+Instala la app **ntfy** en el móvil (App Store / Google Play) y suscríbete al mismo topic.
+Ojo: ntfy distingue **mayúsculas de minúsculas**; copia el topic, no lo teclees.
+`ALERT_CLICK_URL` ya apunta a la UI publicada.
+
+Para rotar el topic: cambia el secreto del repositorio y vuelve a desplegar (o
+`kubectl -n house-finder rollout restart deployment/house-finder`).
+
 Las credenciales `IDEALISTA_API_*` solo hacen falta si Idealista aprobó el acceso a su API
 oficial y se selecciona `idealista=idealista-api` en `SCRAPER_PROVIDERS`. No habilites ese
 proveedor hasta validar su acceso y respuesta en el entorno autorizado.

@@ -21,6 +21,7 @@ from app.config import Settings, get_settings
 from app.domain.exceptions import ConfigurationException
 from app.domain.models import SearchCriteria
 from app.domain.ports import (
+    AlertNotifierPort,
     ClassifierPort,
     ListingRepository,
     ScheduledSearchServiceProtocol,
@@ -28,10 +29,12 @@ from app.domain.ports import (
     SearchProfileStore,
     SearchServiceProtocol,
 )
+from app.infrastructure.alerts.ntfy_notifier import NtfyNotifier
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
 from app.infrastructure.geocoding.carto_ciudad_locator import CartoCiudadPostalCodeLocator
 from app.infrastructure.repositories.json_file_repository import JsonFileListingRepository
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
+from app.infrastructure.logging_config import get_logger
 from app.infrastructure.repositories.search_profile_store import (
     InMemorySearchProfileStore,
     JsonSearchProfileStore,
@@ -64,6 +67,8 @@ class ServiceContainer:
     scheduled_search_service: ScheduledSearchServiceProtocol
     search_profile_service: SearchProfileService
     search_profile_store: SearchProfileStore
+    #: ``None`` cuando ``ALERTS_ENABLED=false`` (el job diario no envía nada).
+    alert_notifier: AlertNotifierPort | None = None
 
 
 def build_container(settings: Settings | None = None) -> ServiceContainer:
@@ -110,12 +115,26 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         return resolved.build_daily_criteria(), source
 
     profile_service = SearchProfileService(profile_store, default_profile)
+
+    # Alertas push de viviendas nuevas (ntfy: app móvil iOS y Android).
+    alert_notifier: AlertNotifierPort | None = None
+    if resolved.alerts_enabled:
+        alert_notifier = NtfyNotifier(
+            resolved.ntfy_topic,
+            base_url=resolved.ntfy_base_url,
+            token=resolved.ntfy_token,
+            priority=resolved.ntfy_priority,
+            logger=get_logger("app.alerts"),
+        )
+
     scheduled_search_service = ScheduledSearchService(
         search_service,
         repository,
         resolved.build_daily_criteria(),
         # La UI puede cambiar el perfil: el cron lo resuelve en cada ejecución.
         criteria_provider=profile_service.resolve_criteria,
+        notifier=alert_notifier,
+        alert_click_url=resolved.alert_click_url,
     )
 
     return ServiceContainer(
@@ -127,6 +146,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         scheduled_search_service=scheduled_search_service,
         search_profile_service=profile_service,
         search_profile_store=profile_store,
+        alert_notifier=alert_notifier,
     )
 
 

@@ -11,9 +11,10 @@ import time
 from datetime import date
 from typing import Any, Awaitable, Callable
 
+from app.application.services.listing_alerts import build_digest, select_new_listings
 from app.domain.exceptions import DomainException
 from app.domain.models import SearchCriteria, SearchResult
-from app.domain.ports import ListingRepository, SearchServiceProtocol
+from app.domain.ports import AlertNotifierPort, ListingRepository, SearchServiceProtocol
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["ScheduledSearchService", "SCHEDULED_JOB_ID"]
@@ -32,6 +33,8 @@ class ScheduledSearchService:
         criteria: SearchCriteria,
         *,
         criteria_provider: Callable[[], Awaitable[SearchCriteria]] | None = None,
+        notifier: AlertNotifierPort | None = None,
+        alert_click_url: str | None = None,
         logger: Any | None = None,
         today: Callable[[], date] | None = None,
     ) -> None:
@@ -40,6 +43,9 @@ class ScheduledSearchService:
         self._criteria = criteria
         # El perfil puede cambiar desde la UI: se resuelve al inicio de cada ejecución.
         self._criteria_provider = criteria_provider
+        # Sin notificador configurado el job funciona igual, sin alertas.
+        self._notifier = notifier
+        self._alert_click_url = alert_click_url
         self._logger = logger or get_logger("app.scheduler")
         self._today = today or date.today
 
@@ -74,6 +80,8 @@ class ScheduledSearchService:
             )
             return None
 
+        previous = await self._find_previous(run_date, fingerprint)
+
         try:
             result = await self._search_service.run_search(criteria, trigger="scheduler")
         except DomainException as exc:
@@ -107,7 +115,70 @@ class ScheduledSearchService:
             run_date=run_date.isoformat(),
             duration_ms=self._elapsed_ms(started),
         )
+        await self._notify_new_listings(result, previous)
         return result
+
+    async def _find_previous(
+        self,
+        run_date: date,
+        fingerprint: str,
+    ) -> SearchResult | None:
+        """Ejecución programada anterior; un fallo aquí no debe tumbar la búsqueda."""
+        try:
+            return await self._repository.find_previous_scheduled(fingerprint, run_date)
+        except Exception:  # la alerta es un extra: nunca bloquea el job
+            self._logger.warning(
+                "scheduled_search_previous_lookup_failed",
+                error_code="REPOSITORY_FAILURE",
+                criteria_fingerprint=fingerprint,
+                run_date=run_date.isoformat(),
+            )
+            return None
+
+    async def _notify_new_listings(
+        self,
+        result: SearchResult,
+        previous: SearchResult | None,
+    ) -> None:
+        """Envía un único resumen con las viviendas que no salieron la vez anterior."""
+        if self._notifier is None:
+            return
+
+        new_listings = select_new_listings(result, previous)
+        if not new_listings:
+            self._logger.info(
+                "listing_alert_skipped",
+                search_id=str(result.search_id),
+                reason="no_new_listings",
+            )
+            return
+
+        digest = build_digest(
+            new_listings,
+            result.criteria,
+            dashboard_url=self._alert_click_url,
+        )
+        try:
+            await self._notifier.send_digest(
+                title=digest.title,
+                message=digest.message,
+                click_url=digest.click_url,
+            )
+        except Exception:  # una alerta caída no invalida la búsqueda ya guardada
+            self._logger.exception(
+                "listing_alert_failed",
+                search_id=str(result.search_id),
+                error_code="NOTIFICATION_FAILURE",
+                new_count=len(new_listings),
+            )
+            return
+
+        self._logger.info(
+            "listing_alert_sent",
+            search_id=str(result.search_id),
+            new_count=len(new_listings),
+            total_count=result.matched_count,
+        )
 
     async def scheduler_entrypoint(self) -> None:
         """Callable registrado en APScheduler: nunca propaga excepciones."""

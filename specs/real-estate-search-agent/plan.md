@@ -841,5 +841,290 @@ Sin cambios: valores no reconocidos se normalizan a `null`, no son errores de ne
 - `pytest -q`: suite completa en verde.
 - `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
 
+## Revisión 2026-11-12 — diagnóstico de ejecuciones y resultados obsoletos
+
+### Objetivo
+
+Corregir la idempotencia para que una búsqueda manual no cancele el cron diario y hacer
+observable si APScheduler está activo y cuándo ejecutará de nuevo. Si una búsqueda falla
+con `503` antes de persistirse, la UI conservará el último resultado correcto en lugar de
+vaciarlo, dejando visible que los anuncios mostrados no proceden del intento fallido.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Hacer que la consulta de idempotencia del job diario solo encuentre ejecuciones con
+  `trigger="scheduler"`.
+- Añadir al endpoint `/health` el estado real del scheduler y la hora de su próxima
+  ejecución; mantener `scheduler_enabled` por compatibilidad.
+- Conservar los resultados ya mostrados mientras se ejecuta una búsqueda y ante un error.
+- Añadir pruebas que reproduzcan los casos anteriores.
+
+#### Fuera del alcance (out of scope)
+
+- Ejecutar o modificar el despliegue remoto, las credenciales o la configuración del
+  clúster.
+- Reintentar automáticamente búsquedas fallidas o clasificaciones `503`; no se conoce
+  todavía si el fallo viene del proveedor LLM, de la red o del Ingress.
+- Guardar resultados parciales sin clasificar ni cambiar el contrato de búsqueda.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Idempotencia diaria | Ignorar búsquedas con trigger distinto de `scheduler` | Una ejecución manual de los mismos criterios no debe suprimir el cron. |
+| Estado del scheduler | Exponer `scheduler_running` y `next_run_time` desde `/health` | `scheduler_enabled` solo indica configuración y no acredita que el job esté vivo. |
+| Fallo durante búsqueda | Mantener el último resultado renderizado y su fecha | El servicio solo persiste búsquedas completas; no presentar una vista vacía como si fuese el resultado nuevo. |
+
+### Contratos de interfaces (ports)
+
+Sin cambios en los métodos públicos de los ports. `ListingRepository.find_by_criteria_and_day`
+se precisa como consulta de ejecuciones programadas, no de búsquedas manuales.
+
+### Modelo de datos
+
+Sin cambios en entidades ni datos persistidos. `HealthResponse` añade
+`scheduler_running: bool` y `next_run_time: datetime | None`.
+
+### Endpoints de la API
+
+`GET /health` conserva `200` y los campos existentes, añadiendo el estado del scheduler y
+la hora ISO-8601 de la próxima ejecución (o `null` si no hay job activo). No se cambian
+los endpoints de búsqueda ni sus códigos de error.
+
+### Flujo del job programado
+
+1. Consultar si ya existe un resultado `trigger="scheduler"` para los criterios y fecha.
+2. Si existe, registrar el duplicado y terminar; resultados `api` o `profile` no bloquean
+   el cron.
+3. En otro caso, ejecutar y persistir la búsqueda como hasta ahora.
+4. El healthcheck informa si el scheduler está activo y su próxima ejecución; un error
+   del proveedor sigue quedando registrado y no se convierte en resultado exitoso.
+
+### Estrategia de logging
+
+Sin cambios. Se mantienen los eventos existentes del job y los campos de contexto; no se
+registran credenciales ni datos de contacto.
+
+### Jerarquía de excepciones
+
+Sin cambios. `ClassifierException` continúa respondiendo `503`; una búsqueda que falla
+antes de persistirse no reemplaza el último resultado exitoso.
+
+### Plan de tests
+
+- Repositorios JSON y en memoria: una búsqueda `profile` con los mismos criterios/fecha
+  no se considera ejecución programada; una búsqueda `scheduler` sí es duplicado.
+- Servicio programado: prueba de regresión para la búsqueda manual previa al cron.
+- API: `/health` informa scheduler inactivo y ausencia de próxima ejecución cuando está
+  deshabilitado, y el estado configurado cuando está activo.
+- UI: verificación sintáctica y prueba existente/de navegador si está disponible; no
+  borrar la vista anterior al iniciar ni al fallar una búsqueda.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El `503` proviene del proveedor LLM o de la infraestructura externa | No se guarda una búsqueda nueva | Conservar y fechar claramente el último resultado; obtener el `request_id` para investigar logs sin afirmar una causa no verificada. |
+| El scheduler está configurado pero su job no se registra | El cron no se ejecuta | Exponer `scheduler_running` y `next_run_time` en `/health`. |
+| Cambio accidental en idempotencia | Duplicar el coste de ejecuciones programadas | Seguir omitiendo los resultados `scheduler` del mismo día y cubrirlo con tests de ambos repositorios. |
+
+### Orden de implementación
+
+1. [x] Corregir la consulta de idempotencia — `app/infrastructure/repositories/`, tests — una ejecución `profile` no bloquea el cron y una `scheduler` sí.
+2. [x] Exponer estado del job — `app/api/routes.py`, `app/api/schemas.py`, tests — health refleja actividad y próxima ejecución.
+3. [x] Conservar la vista previa — `app/web/app.js` — iniciar/fallar una búsqueda no borra los anuncios anteriores.
+4. [ ] Ejecutar pruebas focalizadas y comprobaciones — criterios de aceptación basados en resultados reales.
+
+### Criterios de aceptación
+
+- [x] Una búsqueda manual del día no impide la ejecución programada; una ejecución programada previa sí conserva la idempotencia.
+- [x] `/health` diferencia scheduler habilitado de scheduler activo y devuelve su próxima ejecución si existe.
+- [x] Un intento fallido no se presenta como un nuevo conjunto de resultados ni elimina el último resultado visible.
+- [x] Las pruebas focalizadas pasan.
+
+### Checklist de progreso
+
+- [x] 1. Corregir la consulta de idempotencia y cubrirla con pruebas.
+- [x] 2. Exponer el estado del scheduler en el healthcheck.
+- [x] 3. Conservar los últimos resultados visibles durante búsquedas fallidas.
+- [x] 4. Validar las pruebas y comprobaciones acordadas.
+
+### Evidencia de esta revisión
+
+- `pytest -q`: 312 tests pasaron.
+- `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
 
 
+
+
+## Revisión 2026-11-14 — alertas push de viviendas nuevas en la búsqueda programada
+
+### Objetivo
+
+Avisar en el móvil (iPhone y Android) cuando el job diario de las 07:00 encuentra
+viviendas que no aparecían en la ejecución programada anterior. Se envía **un solo
+mensaje resumen** por ejecución, para no inundar de notificaciones al usuario.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Puerto `AlertNotifierPort` y adaptador `NtfyNotifier` (ntfy.sh o instancia propia,
+  con token opcional para topics protegidos).
+- Servicio `listing_alerts`: selección de novedades por `(portal, url)` y construcción
+  del digest (máximo 10 viviendas + «…y N más»).
+- Consulta `ListingRepository.find_previous_scheduled` en el repositorio JSON y en el
+  de memoria, incluida la reconstrucción del índice tras un reinicio.
+- Cableado en el contenedor de servicios y en `ScheduledSearchService`.
+- Configuración `ALERTS_ENABLED`, `NTFY_BASE_URL`, `NTFY_TOPIC`, `NTFY_TOKEN`,
+  `NTFY_PRIORITY` y `ALERT_CLICK_URL`, validada al arrancar.
+- Documentación (README, `docs/USAGE.md`, `.env.example`) y manifiestos de Kubernetes
+  (ConfigMap y Secret).
+
+#### Fuera del alcance (out of scope)
+
+- Alertas en búsquedas manuales o desde la UI: solo el job programado notifica.
+- Avisos de bajada de precio o de anuncios que desaparecen.
+- Historial de notificaciones enviadas, reintentos o reenvío de alertas fallidas.
+- Cambios en el contrato ni en los códigos de error de los endpoints de búsqueda.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Referencia de comparación | Última ejecución `trigger="scheduler"` del mismo perfil | Una búsqueda manual no representa «lo de ayer»: no debe silenciar novedades ni alterar la idempotencia diaria. |
+| Clave de novedad | `(portal, url)` | El mismo enlace en dos portales es una publicación distinta; los identificadores internos pueden cambiar entre ejecuciones. |
+| Formato del aviso | Un único digest (10 viviendas + resumen) | Evita una notificación por anuncio y el ruido en el móvil; el detalle completo está en la UI. |
+| Primera ejecución | Sin referencia previa todo es nuevo | Si no, la primera mañana tras desplegar el servicio no avisaría de nada. |
+| Fallo del notificador | Se registra y no invalida la búsqueda | La búsqueda ya está persistida; la alerta es un extra best-effort. |
+| Transporte | ntfy por `POST` HTTP | Apps nativas iOS y Android, sin cuenta ni credenciales de Google/Apple, y permite autoalojarlo. |
+
+### Contratos de interfaces (ports)
+
+- Nuevo `AlertNotifierPort.send_digest(*, title, message, click_url=None)`.
+- Nuevo `ListingRepository.find_previous_scheduled(criteria_fingerprint, before)`;
+  `None` si el perfil nunca se ha ejecutado de forma programada.
+- `ScheduledSearchService` acepta `notifier` y `alert_click_url` opcionales; sin
+  notificador el job funciona exactamente igual.
+
+### Modelo de datos
+
+Sin cambios en lo persistido: la referencia son los resultados `trigger="scheduler"`
+ya guardados en `data/results`. `ListingDigest` es un valor en memoria.
+
+### Configuración
+
+| Variable | Defecto | Uso |
+|---|---|---|
+| `ALERTS_ENABLED` | `false` | Activa el envío desde el job diario. |
+| `NTFY_BASE_URL` | `https://ntfy.sh` | Servidor ntfy público o propio. |
+| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app; obligatorio con alertas activas. |
+| `NTFY_TOKEN` | vacío | Token `Bearer`, solo si el topic está protegido. |
+| `NTFY_PRIORITY` | `3` | Prioridad mostrada por la app (1–5). |
+| `ALERT_CLICK_URL` | vacío | URL que abre la notificación; vacío = primera vivienda nueva. |
+
+Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` la aplicación no arranca
+(`CONFIGURATION_ERROR`): mejor fallar al desplegar que enviar alertas en silencio a
+ningún sitio. El topic se valida contra `[-_A-Za-z0-9]{1,64}`.
+
+### Flujo del job programado
+
+1. Resolver el perfil y comprobar la idempotencia del día (solo ejecuciones `scheduler`).
+2. Buscar la última ejecución programada anterior del mismo criterio; un fallo de esta
+   consulta se registra y se continúa como si no hubiera referencia.
+3. Ejecutar y persistir la búsqueda.
+4. Calcular las viviendas nuevas por `(portal, url)`; si no hay ninguna, registrar
+   `listing_alert_skipped` y terminar sin enviar nada.
+5. Construir el digest y enviarlo con el notificador; un error de envío se registra
+   (`listing_alert_failed`) y **no** cambia el resultado devuelto.
+
+### Estrategia de logging
+
+`listing_alert_sent` (con `new_count` y `total_count`), `listing_alert_skipped`,
+`listing_alert_failed` (nivel `exception`), `scheduled_search_previous_lookup_failed`,
+`alert_delivered` y `alert_delivery_failed`. Nunca se registran `NTFY_TOPIC` ni
+`NTFY_TOKEN` completos.
+
+### Jerarquía de excepciones
+
+Nueva `NotificationException` (`NOTIFICATION_FAILURE`, HTTP 502) que lanza el
+adaptador ante error de red o respuesta `>= 400`. El job la captura para no tumbar una
+búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de envío.
+
+### Plan de tests
+
+- `test_listing_alerts.py`: contenido del digest (precio con separador de miles, m²,
+  habitaciones, portal, título y URL), singular del título y novedad al cambiar de
+  portal con la misma URL.
+- `test_ntfy_notifier.py`: endpoint, cuerpo, cabeceras `Title`/`Click`/`Priority`,
+  token `Bearer`, errores HTTP y de red, y topic obligatorio.
+- `test_scheduled_search.py`: primera ejecución avisa de todo, solo lo ausente de la
+  ejecución anterior se envía, silencio cuando no hay novedades, una búsqueda manual no
+  es referencia, fallo de ntfy no rompe el job y tope de 10 viviendas.
+- Repositorios: `find_previous_scheduled` devuelve la última ejecución anterior,
+  ignora las manuales y el propio día, y sobrevive a un reinicio.
+- Configuración: alertas desactivadas por defecto, topic obligatorio y validación del
+  formato.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| En ntfy.sh cualquier persona que conozca el topic recibe y lee los mensajes | Fuga de datos de la búsqueda | Topic largo y aleatorio, o `NTFY_TOKEN` sobre topic protegido o instancia propia. |
+| La app ntfy no está suscrita y nadie ve el aviso | Cambios silenciosos | Suscripción documentada en `docs/USAGE.md`; el fallo de entrega queda en el log. |
+| ntfy caído o sin red | Sin notificación | Se registra `listing_alert_failed` y la búsqueda sigue siendo válida y visible en la UI. |
+| Un digest gigante se trunca en el móvil | Información perdida | Máximo 10 viviendas y «…y N más»; el resto se consulta en la UI. |
+| El topic de la app no coincide con `NTFY_TOPIC` (mayúsculas) | No llega nada y el envío responde `200` | Usar un topic en minúsculas y pegarlo en la app; verificado en `docs/USAGE.md` §10.1. |
+
+### Orden de implementación
+
+1. [x] Puerto, excepción y adaptador ntfy — `app/domain/`, `app/infrastructure/alerts/` — con tests sin red.
+2. [x] Selección de novedades y digest — `app/application/services/listing_alerts.py` — con tests de contenido.
+3. [x] Consulta de la ejecución anterior en ambos repositorios.
+4. [x] Cableado en `ScheduledSearchService` y en el contenedor de servicios.
+5. [x] Configuración validada, documentación y manifiestos de despliegue.
+6. [x] Pipeline: `ALERTS_ENABLED` activo en el ConfigMap y el topic sincronizado al
+   Secret del clúster desde el secreto `NTFY_TOPIC` del repositorio.
+7. [x] Ejecutar pruebas y comprobaciones estáticas.
+
+### Criterios de aceptación
+
+- [x] El job diario envía un único resumen con las viviendas ausentes de la ejecución programada anterior.
+- [x] Sin ejecución previa avisa de todo lo encontrado; sin novedades no envía nada.
+- [x] Una búsqueda manual no cuenta como referencia ni silencia el aviso.
+- [x] Un fallo de ntfy se registra y no invalida la búsqueda guardada.
+- [x] Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` el arranque falla con error de configuración.
+- [x] Las pruebas focalizadas y la suite completa pasan.
+
+### Checklist de progreso
+
+- [x] 1. Adaptador ntfy y su puerto.
+- [x] 2. Digest de viviendas nuevas.
+- [x] 3. Referencia de la ejecución programada anterior.
+- [x] 4. Integración en el job diario.
+- [x] 5. Configuración, documentación y despliegue.
+- [x] 6. Validación final.
+
+### Evidencia de esta revisión
+
+- `pytest -q`: 334 tests pasaron (incluye `test_listing_alerts.py` y `test_ntfy_notifier.py`).
+- `python -m compileall -q app`, `node --check app/web/app.js` y `git diff --check`: en verde.
+- `GET https://ntfy.sh/v1/health` → `{"healthy":true,"role":"active"}` desde la Pi.
+- **Entrega real verificada** el 2026-11-14 con el adaptador de producción y un topic
+  privado: `alert_delivered service=ntfy status_code=200`, y el mensaje recuperado del
+  servidor con `GET https://ntfy.sh/<topic>/json?poll=1&since=all` (título transliterado a
+  ASCII, cuerpo UTF-8 con €, · y m² intactos, `Priority`, `Tags` y `Click` correctos).
+  Recibido en el iPhone.
+- **Aprendizaje operativo**: los topics de ntfy **distinguen mayúsculas de minúsculas**.
+  Un envío a `casa-nueva-AbC` no llega a la suscripción de `casa-nueva-abc`, y no hay
+  error (`200` en ambos). Además, en iOS la entrega en segundo plano puede tardar minutos
+  aunque el envío haya sido aceptado. Documentado en `docs/USAGE.md` §10.1.
+- **Pipeline**: el despliegue sincroniza `NTFY_TOPIC`/`NTFY_TOKEN` desde los secretos del
+  repositorio al Secret del clúster con un merge patch (no borra el resto de claves),
+  desactiva el paso si `ALERTS_ENABLED` no está a `true`, aborta antes de aplicar los
+  manifiestos si falta el topic, y anota el deployment con un hash del topic para
+  reiniciar el pod solo cuando cambia. Verificado con `kubectl` simulado en los cuatro
+  casos (con topic, con topic y token, sin topic, con alertas desactivadas) y con
+  `yaml.safe_load` + `bash -n`.

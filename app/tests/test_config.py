@@ -84,3 +84,34 @@ def test_daily_must_have_changes_the_criteria_fingerprint() -> None:
     with_requirements = build_settings(daily_must_have="piscina,padel").build_daily_criteria()
 
     assert without_requirements.fingerprint() != with_requirements.fingerprint()
+
+
+def test_alerts_are_off_by_default() -> None:
+    settings = build_settings()
+
+    assert settings.alerts_enabled is False
+    assert settings.ntfy_topic == ""
+    assert settings.ntfy_base_url == "https://ntfy.sh"
+    assert settings.ntfy_priority == 3
+
+
+def test_enabling_alerts_requires_a_topic() -> None:
+    with pytest.raises(ConfigurationException) as raised:
+        build_settings(alerts_enabled=True)
+
+    assert raised.value.code == "CONFIGURATION_ERROR"
+    assert "NTFY_TOPIC" in str(raised.value)
+
+
+def test_ntfy_topic_rejects_spaces_and_invalid_characters() -> None:
+    with pytest.raises(ValueError):
+        build_settings(ntfy_topic="casa nueva")
+
+    assert build_settings(ntfy_topic="casa-nueva_2026").ntfy_topic == "casa-nueva_2026"
+
+
+def test_blank_ntfy_token_and_click_url_become_none() -> None:
+    settings = build_settings(ntfy_token="   ", alert_click_url="")
+
+    assert settings.ntfy_token is None
+    assert settings.alert_click_url is None

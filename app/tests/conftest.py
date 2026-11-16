@@ -77,6 +77,25 @@ class FakeScraper:
         return list(self.listings)
 
 
+class FakeNotifier:
+    """Notificador push en memoria: guarda los digests enviados."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.error = error
+        self.digests: list[dict[str, Any]] = []
+
+    async def send_digest(
+        self,
+        *,
+        title: str,
+        message: str,
+        click_url: str | None = None,
+    ) -> None:
+        if self.error is not None:
+            raise self.error
+        self.digests.append({"title": title, "message": message, "click_url": click_url})
+
+
 class FakeClassifier:
     """Implementación en memoria de ``ClassifierPort``."""
 
@@ -247,6 +266,7 @@ def make_container(settings: Settings) -> Any:
 __all__ = [
     "ExplodingRepository",
     "FakeClassifier",
+    "FakeNotifier",
     "FakeScraper",
     "RecordingLogger",
     "make_listing",

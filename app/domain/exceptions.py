@@ -14,6 +14,7 @@ __all__ = [
     "ClassifierException",
     "DomainException",
     "GeoLocationException",
+    "NotificationException",
     "RepositoryException",
     "ScraperException",
     "SearchNotFoundError",
@@ -103,3 +104,11 @@ class RepositoryException(DomainException):
     code = "REPOSITORY_FAILURE"
     http_status = 500
     default_message = "No se han podido almacenar los resultados de la búsqueda"
+
+
+class NotificationException(DomainException):
+    """Fallo al entregar una alerta push (servicio de notificaciones caído)."""
+
+    code = "NOTIFICATION_FAILURE"
+    http_status = 502
+    default_message = "No se ha podido enviar la alerta"

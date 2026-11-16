@@ -150,7 +150,7 @@ async def test_results_survive_a_restart(tmp_path: Path) -> None:
 async def test_daily_idempotency_survives_a_restart(tmp_path: Path) -> None:
     """El job diario no debe repetir una búsqueda ya hecha antes del reinicio."""
     first = repository(tmp_path)
-    result = build_result(fingerprint="fp-daily")
+    result = build_result(fingerprint="fp-daily", trigger=Trigger.SCHEDULER)
     await first.save(result)
 
     second = repository(tmp_path)
@@ -159,6 +159,23 @@ async def test_daily_idempotency_survives_a_restart(tmp_path: Path) -> None:
     assert found is not None
     assert found.search_id == result.search_id
     assert await second.find_by_criteria_and_day("fp-daily", date(2026, 11, 6)) is None
+
+
+async def test_manual_result_does_not_block_daily_idempotency_after_restart(
+    tmp_path: Path,
+) -> None:
+    first = repository(tmp_path)
+    manual = build_result(fingerprint="fp-daily", trigger=Trigger.PROFILE)
+    await first.save(manual)
+
+    second = repository(tmp_path)
+    assert await second.find_by_criteria_and_day("fp-daily", manual.run_date) is None
+
+    scheduled = build_result(fingerprint="fp-daily", trigger=Trigger.SCHEDULER)
+    await second.save(scheduled)
+    found = await second.find_by_criteria_and_day("fp-daily", scheduled.run_date)
+    assert found is not None
+    assert found.search_id == scheduled.search_id
 
 
 async def test_saving_same_search_id_is_idempotent(tmp_path: Path) -> None:
@@ -221,3 +238,30 @@ async def test_list_recent_orders_by_modification_time(tmp_path: Path) -> None:
     recent = await repo.list_recent(limit=10)
 
     assert {item.search_id for item in recent} == {first.search_id, second.search_id}
+
+
+async def test_find_previous_scheduled_returns_the_last_run_before_a_date(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    older = build_result(run_date=date(2026, 11, 3), trigger=Trigger.SCHEDULER)
+    newest = build_result(run_date=date(2026, 11, 4), trigger=Trigger.SCHEDULER)
+    await repo.save(older)
+    await repo.save(newest)
+
+    # Un reinicio del proceso reconstruye el índice desde disco.
+    reopened = repository(tmp_path)
+
+    found = await reopened.find_previous_scheduled("fp-1", date(2026, 11, 5))
+
+    assert found is not None
+    assert found.search_id == newest.search_id
+
+
+async def test_find_previous_scheduled_ignores_manual_runs_and_today(tmp_path: Path) -> None:
+    repo = repository(tmp_path)
+    manual = build_result(run_date=date(2026, 11, 4), trigger=Trigger.PROFILE)
+    today = build_result(run_date=date(2026, 11, 5), trigger=Trigger.SCHEDULER)
+    await repo.save(manual)
+    await repo.save(today)
+
+    assert await repo.find_previous_scheduled("fp-1", date(2026, 11, 5)) is None
+    assert await repo.find_previous_scheduled("otro-perfil", date(2026, 11, 5)) is None

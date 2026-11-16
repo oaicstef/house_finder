@@ -78,7 +78,8 @@ class JsonFileListingRepository:
                 continue
 
             self._index[search_id] = path
-            self._daily_index.setdefault((fingerprint, run_date), search_id)
+            if payload.get("trigger") == Trigger.SCHEDULER.value:
+                self._daily_index.setdefault((fingerprint, run_date), search_id)
 
     async def save(self, result: SearchResult) -> None:
         try:
@@ -86,10 +87,11 @@ class JsonFileListingRepository:
                 payload = _serialize_result(result)
                 await asyncio.to_thread(self._write_atomic, result.search_id, payload)
                 self._index[result.search_id] = self._path_for(result.search_id)
-                self._daily_index.setdefault(
-                    (result.criteria_fingerprint, result.run_date),
-                    result.search_id,
-                )
+                if result.trigger is Trigger.SCHEDULER:
+                    self._daily_index.setdefault(
+                        (result.criteria_fingerprint, result.run_date),
+                        result.search_id,
+                    )
         except OSError as exc:
             raise RepositoryException(
                 "No se ha podido guardar el resultado de la búsqueda",
@@ -138,6 +140,23 @@ class JsonFileListingRepository:
                 continue
         results.sort(key=lambda result: result.created_at, reverse=True)
         return results[:limit]
+
+    async def find_previous_scheduled(
+        self,
+        criteria_fingerprint: str,
+        before: date,
+    ) -> SearchResult | None:
+        """Ejecución programada más reciente anterior a ``before``."""
+        async with self._lock:
+            days = [
+                run_date
+                for (fingerprint, run_date) in self._daily_index
+                if fingerprint == criteria_fingerprint and run_date < before
+            ]
+            if not days:
+                return None
+            search_id = self._daily_index[(criteria_fingerprint, max(days))]
+        return await self.get_by_id(search_id)
 
     async def find_latest(self) -> SearchResult | None:
         """Búsqueda más reciente en disco; tolera ficheros corruptos intermedios."""

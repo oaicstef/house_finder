@@ -8,7 +8,9 @@ Backend de un **agente de búsqueda inmobiliaria personalizada**: scrapea Ideali
 Fotocasa mediante actores de Apify, clasifica los anuncios con un LLM (DeepSeek vía SDK
 de OpenAI) y devuelve solo las viviendas que encajan con los criterios del usuario.
 Incluye una búsqueda automática diaria a las 07:00 (APScheduler) con idempotencia por
-fecha + criterio, una **UI web con fotos** y despliegue en **Kubernetes ARM64**
+fecha + criterio, **una notificación push al móvil (iPhone y Android) por cada vivienda
+nueva** respecto a la ejecución anterior, una **UI web con fotos** y despliegue en
+**Kubernetes ARM64**
 (el despliegue en el N100 con Docker Compose se mantiene como alternativa).
 
 Construido con Clean Architecture (dominio → aplicación → infraestructura/API) y SOLID.
@@ -18,6 +20,7 @@ Construido con Clean Architecture (dominio → aplicación → infraestructura/A
 | Documento | Contenido |
 |---|---|
 | [docs/USAGE.md](docs/USAGE.md) | Guía de uso: tokens, actores de Apify, recetas `curl`, cliente Python, errores y resolución de problemas. |
+| [docs/INFRASTRUCTURE.md](docs/INFRASTRUCTURE.md) | Mapa de infraestructura: dónde corre el clúster, pipeline, secretos, verificación y puntos frágiles. **Léelo antes de tocar despliegue o configuración.** |
 | [specs/real-estate-search-agent/plan.md](specs/real-estate-search-agent/plan.md) | Especificación técnica: ports, modelo de datos, flujo del job, excepciones y riesgos. |
 | [specs/search-geo-year-filters/plan.md](specs/search-geo-year-filters/plan.md) | Radio por código postal y año de construcción. |
 | [specs/search-profile-ui-k8s/plan.md](specs/search-profile-ui-k8s/plan.md) | Perfil de búsqueda configurable, fotos, UI y despliegue ARM64. |
@@ -92,6 +95,7 @@ app/
 └── tests/                   # pytest + pytest-asyncio (sin APIs reales)
 deploy/k8s/                  # Namespace, ConfigMap, PVC, Deployment ARM64, Service
 deploy/n100/                 # Alternativa: Docker Compose para el N100
+docs/INFRASTRUCTURE.md       # dónde corre cada cosa: clúster, pipeline, secretos
 Dockerfile                   # imagen multi-arch (python:3.13-slim)
 specs/                       # planes por feature (skill plan-first)
 ```
@@ -116,7 +120,7 @@ uvicorn app.main:app --reload
 - **UI con fotos**: <http://127.0.0.1:8000/> (criterios editables, última búsqueda
   guardada y botón «Ejecutar búsqueda»)
 - Documentación interactiva: <http://127.0.0.1:8000/docs>
-- Health check: `GET /health`
+- Health check: `GET /health` (incluye estado y próxima ejecución del scheduler)
 
 Si faltan `APIFY_TOKEN` o `DEEPSEEK_API_KEY`, el arranque falla con
 `ConfigurationException` (`CONFIGURATION_ERROR`), nunca con un `KeyError`.
@@ -200,6 +204,12 @@ Docker Compose en el N100 sigue en [deploy/n100/README.md](deploy/n100/README.md
 | `LOG_LEVEL` | `INFO` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR` \| `CRITICAL` |
 | `ENABLE_SCHEDULER` | `true` | Activa el cron diario (07:00, `TIMEZONE`). |
 | `TIMEZONE` | `Europe/Madrid` | Zona horaria del cron. |
+| `ALERTS_ENABLED` | `false` | Activa la notificación push con las viviendas nuevas del job de las 07:00. |
+| `NTFY_BASE_URL` | `https://ntfy.sh` | Servidor ntfy (público o propio). |
+| `NTFY_TOPIC` | vacío | Topic al que se suscribe la app del móvil. Obligatorio con `ALERTS_ENABLED=true`; llévalo al Secret, no a git (en Kubernetes lo inyecta el pipeline desde el secreto `NTFY_TOPIC` del repositorio). |
+| `NTFY_TOKEN` | vacío | Token, solo si el topic está protegido en el servidor ntfy. |
+| `NTFY_PRIORITY` | `3` | Prioridad de la notificación (1 mínima – 5 urgente). |
+| `ALERT_CLICK_URL` | vacío | URL que abre la notificación (vacío = la primera vivienda nueva). |
 | `SCRAPER_PROVIDERS` | `idealista=apify,fotocasa=local` | Mapa `portal=proveedor` (`local` / `idealista-api` / `apify` / `none`). Idealista API requiere acceso oficial aprobado. Los portales no listados quedan desactivados. |
 | `SCRAPER_FALLBACK_TO_APIFY` | `true` | Si la fuente local falla o no devuelve anuncios, se reintenta con Apify para ese portal. |
 | `SCRAPER_MAX_ITEMS` | `40` | Anuncios candidatos que se piden por portal. |

@@ -323,8 +323,11 @@ Comprueba que está vivo:
 
 ```bash
 curl http://127.0.0.1:8000/health
-# {"status":"ok","scheduler_enabled":true}
+# {"status":"ok","scheduler_enabled":true,"scheduler_running":true,"next_run_time":"..."}
 ```
+
+`scheduler_enabled` indica la configuración; `scheduler_running` y `next_run_time`
+permiten comprobar si el job diario está registrado y cuándo volverá a ejecutarse.
 
 ## 6. Recetas con curl
 
@@ -833,6 +836,71 @@ ENABLE_SCHEDULER=false
 
 El job nunca propaga excepciones: cualquier fallo se registra con `logger.exception` y
 `error_code` para no perder el error.
+
+### 10.1 Alertas push de viviendas nuevas
+
+Tras cada ejecución programada se comparan los anuncios con la **ejecución programada
+anterior** del mismo perfil (por `portal + url`). Si hay viviendas nuevas se envía **una
+sola notificación resumen** vía [ntfy](https://ntfy.sh), que tiene app para **iPhone y
+Android**. La primera mañana (sin ejecución previa) avisa de todo lo encontrado.
+
+```dotenv
+ALERTS_ENABLED=true
+NTFY_BASE_URL=https://ntfy.sh
+# Elige un topic largo y difícil de adivinar; es la "dirección" de tu móvil.
+NTFY_TOPIC=casa-nueva-7f3c1a9b8d2e4f60
+# Solo si proteges el topic con token en el servidor ntfy.
+NTFY_TOKEN=
+NTFY_PRIORITY=3
+# Al tocar la notificación se abre esta URL (vacío = la primera vivienda nueva).
+ALERT_CLICK_URL=https://oaichousefinder.duckdns.org
+```
+
+1. Instala la app **ntfy** (App Store / Google Play).
+2. Suscríbete al mismo `NTFY_TOPIC`.
+3. Arranca con `ALERTS_ENABLED=true`. Con `ALERTS_ENABLED=true` y sin `NTFY_TOPIC` la
+   aplicación **no arranca** (`CONFIGURATION_ERROR`), para que las alertas no fallen en
+   silencio.
+
+En Kubernetes no hay que tocar el clúster a mano: `ALERTS_ENABLED` está activado en
+`deploy/k8s/configmap.yaml` y el topic se guarda como secreto **`NTFY_TOPIC`** del
+repositorio de GitHub; el pipeline lo escribe en el Secret del clúster en cada despliegue
+(`git push` a `main`). Ver `deploy/k8s/README.md`.
+
+El mensaje incluye precio, m², habitaciones, portal, título y enlace de cada vivienda
+(hasta 10; el resto se resume en «…y N más»). Un fallo de ntfy se registra como
+`listing_alert_failed` y **no invalida la búsqueda**, que ya está guardada. En ntfy.sh un
+topic es público para quien lo conozca: usa uno largo o protege el topic con token.
+
+#### Comprobar la entrega antes de esperar al cron
+
+```bash
+# 1. Ver lo que hay en el topic (no requiere la app):
+curl -s "https://ntfy.sh/TU_TOPIC/json?poll=1&since=all"
+
+# 2. Disparar el job diario ahora mismo:
+curl -X POST https://oaichousefinder.duckdns.org/api/v1/scheduled-searches/run
+```
+
+Si el job ya se ejecutó hoy devuelve `{"executed": false, "reason":
+"already_executed_today"}`: espera al día siguiente o elimina el resultado
+`trigger="scheduler"` del día antes de reintentar.
+
+#### Si el móvil no muestra la notificación
+
+- **El topic distingue mayúsculas de minúsculas.** `casa-nueva-AbC` y `casa-nueva-abc`
+  son dos topics distintos, y un mensaje enviado a uno no aparece en el otro. Copia el
+  valor de `NTFY_TOPIC` con el mismo uso de mayúsculas en la app; escríbelo pegándolo, no
+  a mano (el teclado de iOS capitaliza la primera letra).
+- **Usa un topic en minúsculas** si lo vas a teclear: evita el problema anterior.
+- En la app, junto al topic debe aparecer **(instant)**; si dice *polling*, la entrega en
+  segundo plano llega con retraso. Comprueba también Ajustes de iOS → Notificaciones →
+  ntfy → Permitir notificaciones.
+- Comprueba primero en el navegador del móvil (`https://ntfy.sh/TU_TOPIC`): si ahí sí
+  aparecen los mensajes, el servidor y el topic son correctos y el problema está en la
+  app o en los permisos del sistema.
+- Si el servidor respondió `200` (`alert_delivered` en el log) el mensaje **salió**; un
+  retraso de minutos en iPhone es normal cuando la app está en segundo plano.
 
 ## 11. Perfil de búsqueda configurable y UI
 
