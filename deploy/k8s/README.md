@@ -60,6 +60,21 @@ Las credenciales `IDEALISTA_API_*` solo hacen falta si Idealista aprobó el acce
 oficial y se selecciona `idealista=idealista-api` en `SCRAPER_PROVIDERS`. No habilites ese
 proveedor hasta validar su acceso y respuesta en el entorno autorizado.
 
+### Actualizar solo la clave de DeepSeek
+
+Con `kubectl` configurado para el clúster correcto, ejecuta desde la raíz del repositorio
+en PowerShell:
+
+```powershell
+.\deploy\k8s\update-deepseek-key.ps1
+```
+
+El script muestra el contexto actual y pide confirmación antes de solicitar la clave sin
+mostrarla. Modifica únicamente `DEEPSEEK_API_KEY` en `house-finder-secrets`, elimina el
+parche temporal y reinicia `house-finder` para que el Pod cargue la nueva variable de
+entorno. No actualiza otras claves del Secret. Si falla el parche o el rollout, termina con
+un error; comprueba el contexto y el estado del Deployment antes de volver a intentarlo.
+
 ## 3. Aplicar
 
 ```bash
