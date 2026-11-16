@@ -78,7 +78,9 @@ class FakeScraper:
 
 
 class FakeNotifier:
-    """Notificador push en memoria: guarda los digests enviados."""
+    """Notificador en memoria: guarda los digests enviados."""
+
+    channel = "fake"
 
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error

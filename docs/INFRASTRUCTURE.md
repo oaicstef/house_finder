@@ -55,7 +55,7 @@ cancela despliegues a medias.
 | Build & Push Image | Buildx + QEMU, **solo `linux/arm64`**, publica `:latest`, `:latest-arm64`, `:ref_tag` y el tag inmutable `:sha-<7>` |
 | Set up Kubeconfig | `azure/k8s-set-context` con el secreto `KUBE_CONFIG` |
 | Ensure namespace and GHCR pull secret | Crea el namespace y `ghcr-login-secret` si faltan |
-| Sync alert credentials | Copia `NTFY_TOPIC`/`NTFY_TOKEN` del repositorio al Secret del clúster con `patch --type merge` (no borra las demás claves); se salta si `ALERTS_ENABLED` no es `true`; aborta si hay alertas activas y falta el topic; anota el deployment con un hash del topic para reiniciar solo cuando cambia |
+| Sync alert credentials | Copia los secretos de ntfy y/o email al Secret del clúster con `patch --type merge` (no borra las demás claves); valida los secretos de los canales activados y anota el deployment con un hash para reiniciar cuando cambian |
 | Apply Kubernetes manifests | `kubectl apply -k deploy/k8s` |
 | Pin deployment to the built image | `kubectl set image ... :sha-<7>` (tag inmutable, sin caché de nodo) |
 | Wait for rollout | `kubectl rollout status --timeout=180s` |
@@ -77,6 +77,8 @@ arquitectura hay que añadir `linux/amd64` en `platforms`.
 | `DEEPSEEK_API_KEY` | Clasificación LLM. |
 | `NTFY_TOPIC` | Topic de las alertas push; el pipeline lo escribe en `house-finder-secrets`. |
 | `NTFY_TOKEN` | Opcional, si el topic está protegido en el servidor ntfy. |
+| `EMAIL_FROM` / `EMAIL_TO` | Remitente y destinatarios del email; obligatorios con `EMAIL_ALERTS_ENABLED=true`. |
+| `EMAIL_SMTP_USERNAME` / `EMAIL_SMTP_PASSWORD` | Credenciales SMTP opcionales; si se usa autenticación, ambas son obligatorias. |
 | `N100_HOST`, `N100_USER`, `N100_PASSWORD`, `N100_PORT` | **Sin uso** (restos del despliegue por Docker Compose). |
 
 El Secret del clúster `house-finder-secrets` (creado a mano la primera vez, ver
@@ -97,6 +99,8 @@ Fijado en el ConfigMap (`deploy/k8s/configmap.yaml`):
 | `RESULTS_DIR` | `/data/results` | PVC: los resultados sobreviven a reinicios. |
 | `ALERTS_ENABLED` | `true` | Sin `NTFY_TOPIC` el arranque falla (`CONFIGURATION_ERROR`). |
 | `ALERT_CLICK_URL` | `https://oaichousefinder.duckdns.org` | URL que abre la notificación. |
+| `EMAIL_ALERTS_ENABLED` | `false` | Opt-in. Al activarlo, configura `EMAIL_SMTP_HOST` y los secretos de email indicados arriba. |
+| `EMAIL_SMTP_PORT` / `EMAIL_SMTP_STARTTLS` | `587` / `true` | SMTP sobre STARTTLS por defecto; si hay autenticación, STARTTLS es obligatorio. |
 
 ## 5. Verificar tras cualquier cambio
 
@@ -128,6 +132,9 @@ clúster.
   parece «no llegar» sin ningún error.
 - **`ALERTS_ENABLED=true` sin topic → el pod no arranca**. Por eso el pipeline aborta
   antes de aplicar los manifiestos en vez de dejar un CrashLoopBackOff.
+- **`EMAIL_ALERTS_ENABLED=true` requiere SMTP, remitente y destinatarios**. Define el host
+  en el ConfigMap y `EMAIL_FROM`/`EMAIL_TO` (más usuario/contraseña si aplica) como
+  secretos de GitHub antes de activar el canal.
 - **Alertas vs. ejecuciones manuales**: solo las ejecuciones `trigger="scheduler"` sirven
   de referencia y de idempotencia; una búsqueda manual del día no cancela el cron.
 - **DNS en DuckDNS**: el registro A apunta a la IP de Oracle. Si se recrea la instancia,

@@ -138,7 +138,9 @@ class SearchProfileStore(Protocol):
 
 @runtime_checkable
 class AlertNotifierPort(Protocol):
-    """Entrega de alertas push al móvil (un mensaje resumen por ejecución)."""
+    """Entrega un resumen por un canal de notificación."""
+
+    channel: str
 
     async def send_digest(
         self,

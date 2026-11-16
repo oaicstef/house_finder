@@ -1128,3 +1128,149 @@ búsqueda ya guardada; en la API solo aparecería si se expusiese un endpoint de
   reiniciar el pod solo cuando cambia. Verificado con `kubectl` simulado en los cuatro
   casos (con topic, con topic y token, sin topic, con alertas desactivadas) y con
   `yaml.safe_load` + `bash -n`.
+
+## Revisión 2026-11-14 — notificaciones por email de viviendas nuevas
+
+### Objetivo
+
+Enviar por correo el mismo resumen de viviendas nuevas que actualmente se envía por ntfy.
+El envío de correo será un canal independiente y opcional, sin cambiar la selección de
+novedades ni la idempotencia del job.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Adaptador SMTP con STARTTLS, autenticación opcional y varios destinatarios.
+- Activación y validación de configuración por variables de entorno.
+- Intentar cada canal configurado de forma independiente; un fallo de SMTP no impedirá el
+  envío ntfy y viceversa.
+- Sincronizar las credenciales de correo del repositorio a Kubernetes durante el pipeline.
+- Documentar configuración local y producción.
+
+#### Fuera del alcance (out of scope)
+
+- Elegir o crear una cuenta de correo/SMTP, conseguir credenciales o destinatarios.
+- Activar el envío en producción sin que se configuren explícitamente los secretos.
+- Enviar correos por búsquedas manuales o añadir un endpoint de prueba.
+- Plantillas HTML, adjuntos, proveedores de email específicos o preferencias por usuario.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Transporte | SMTP con STARTTLS; autenticación opcional | Compatible con proveedores comunes y servidores relay sin SDK específico. |
+| Contenido | Mismo título/digest de texto plano de ntfy, más enlace de apertura si existe | Una sola construcción del contenido y formato legible en cualquier cliente. |
+| Canales | Lista de `AlertNotifierPort`; cada envío se intenta y registra por separado | Fallo aislado por canal y futura extensión sin cambiar el flujo de novedades. |
+| Activación | `EMAIL_ALERTS_ENABLED=false` por defecto; exige host, remitente y destinatarios al activarse | No rompe despliegues existentes ni presupone credenciales o dirección de usuario. |
+| Secretos de despliegue | Usuario, contraseña, remitente y destinatarios en GitHub Secrets/Kubernetes Secret | No incorporar credenciales ni datos de contacto al repositorio. |
+
+### Contratos de interfaces (ports)
+
+Reutilizar `AlertNotifierPort`; añadir un identificador de canal sin datos sensibles:
+
+```python
+class AlertNotifierPort(Protocol):
+    channel: str
+
+    async def send_digest(
+        self, *, title: str, message: str, click_url: str | None = None
+    ) -> None: ...
+```
+
+`ScheduledSearchService` recibirá `Sequence[AlertNotifierPort]` y continuará el envío
+después de fallos individuales.
+
+### Modelo de datos
+
+No se añaden entidades ni esquemas API. Ajustes de `Settings`: `email_alerts_enabled`,
+`email_smtp_host`, `email_smtp_port`, `email_smtp_username`, `email_smtp_password`,
+`email_smtp_starttls`, `email_smtp_timeout_seconds`, `email_from` y `email_to`
+(destinatarios separados por coma). No se registran direcciones ni credenciales.
+
+### Endpoints de la API
+
+Sin cambios. El correo se envía únicamente como efecto del job programado ya existente.
+
+### Flujo del job programado
+
+1. Seleccionar viviendas nuevas y construir el digest compartido.
+2. Intentar cada canal configurado (`ntfy`, `email`) de forma independiente.
+3. Registrar el éxito o fallo por canal; conservar el resultado de búsqueda aunque falle
+   uno o ambos envíos.
+
+### Estrategia de logging
+
+Mantener `listing_alert_sent` / `listing_alert_failed` con `channel`, conteo y contexto
+del job. El adaptador de correo registra `email_alert_delivered` o
+`email_alert_delivery_failed` con código y tipo de error, nunca host autenticado,
+direcciones, asunto, mensaje ni credenciales.
+
+### Jerarquía de excepciones
+
+Reutilizar `NotificationException` (`NOTIFICATION_FAILURE`) para errores SMTP; el job
+captura el fallo por canal para que no invalide la búsqueda ni los otros canales.
+
+### Plan de tests
+
+- `test_email_notifier.py`: destinatarios, asunto/cuerpo/enlace, TLS y autenticación,
+  error SMTP y destinatario rechazado mediante un servidor SMTP falso; sin red real.
+- `test_config.py`: correo desactivado sin configuración, configuración habilitada
+  válida, faltantes y combinaciones incompletas de credenciales.
+- `test_scheduled_search.py`: se invocan ambos canales; un canal fallido no bloquea el
+  otro ni la búsqueda.
+- `test_api.py`/contenedor: composición de canales según configuración.
+- Validar pipeline con `bash -n`, manifiestos con parser YAML, suite focalizada y suite
+  completa.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| SMTP sin TLS o credenciales mal configuradas | Exposición de datos o correo no entregado | STARTTLS por defecto, validación al arrancar y errores explícitos en logs sin secretos. |
+| SMTP caído | Se pierde el correo | Aislar el fallo y continuar con ntfy y la búsqueda guardada. |
+| Activar correo antes de guardar sus secretos | El pod no arranca | Mantenerlo desactivado por defecto y validar los secretos en el pipeline antes del despliegue. |
+| Una configuración de destinatario contiene varias direcciones | Mensaje duplicado o rechazado | Parsear una lista separada por comas y probar todos los destinatarios. |
+
+### Orden de implementación
+
+1. [x] Generalizar la composición y el envío de canales — `app/domain/ports.py`,
+   `app/application/services/scheduled_search.py`, `app/api/dependencies.py` — ambos
+   canales se intentan independientemente y conservan la compatibilidad del job.
+2. [x] Añadir adaptador SMTP — `app/infrastructure/alerts/email_notifier.py` y
+   `app/tests/test_email_notifier.py` — entrega simulada sin red y fallos traducidos a
+   `NotificationException`.
+3. [x] Añadir configuración validada — `app/config.py`, `app/tests/test_config.py` —
+   desactivado por defecto y configuración incompleta rechazada al activarlo.
+4. [x] Configurar el despliegue y pipeline — `deploy/k8s/configmap.yaml`,
+   `.github/workflows/release.yml`, `docs/INFRASTRUCTURE.md` — correo opt-in, secretos
+   sincronizados sin imprimir valores y rollout al cambiar.
+5. [x] Documentar uso y validar — `docs/USAGE.md`, tests relevantes — instrucciones para
+   SMTP local/producción y comprobaciones en verde.
+
+### Criterios de aceptación
+
+- [x] Una ejecución con novedades envía el digest por cada canal configurado.
+- [x] El fallo de un canal no impide intentar los otros canales ni persiste el job como
+  fallido.
+- [x] Correo desactivado no requiere configuración; habilitarlo sin configuración
+  suficiente falla claramente al arrancar/desplegar.
+- [x] Los secretos y direcciones no aparecen en logs ni en manifiestos versionados.
+- [x] Tests unitarios, suite completa y validaciones del pipeline/manifiestos pasan.
+
+### Checklist de progreso
+
+- [x] 1. Composición de varios canales y envío independiente.
+- [x] 2. Adaptador SMTP con tests sin red.
+- [x] 3. Configuración de correo y validación.
+- [x] 4. Pipeline, Secret y manifiesto opt-in.
+- [x] 5. Documentación y validación final.
+
+### Evidencia
+
+- La suite completa de `pytest -q -o addopts=''` pasó (347 tests).
+- `compileall`, `git diff --check`, parseo de los YAML de Kubernetes/workflow y `bash -n`
+  del paso de sincronización de secretos pasaron.
+- El email permanece opt-in (`EMAIL_ALERTS_ENABLED=false`) porque no se han configurado
+  un servidor/destinatario ni credenciales SMTP; al habilitarlo, el arranque y el pipeline
+  validan la configuración requerida.

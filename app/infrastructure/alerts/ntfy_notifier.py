@@ -48,6 +48,8 @@ def _ascii_header(text: str) -> str:
 class NtfyNotifier:
     """Implementación del puerto ``AlertNotifierPort`` sobre ntfy."""
 
+    channel = "ntfy"
+
     def __init__(
         self,
         topic: str,

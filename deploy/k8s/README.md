@@ -70,15 +70,23 @@ El topic es un secreto: **no se versiona**. Se guarda en el repositorio de GitHu
 |---|---|---|
 | `NTFY_TOPIC` | sí (con alertas activas) | Topic al que está suscrita la app del móvil. |
 | `NTFY_TOKEN` | no | Token `Bearer`, solo si el topic está protegido en el servidor ntfy. |
+| `EMAIL_FROM` / `EMAIL_TO` | sí (si se activa el email) | Remitente y destinatarios (separados por comas). |
+| `EMAIL_SMTP_USERNAME` / `EMAIL_SMTP_PASSWORD` | no | Credenciales SMTP opcionales; deben definirse juntas. |
 
 En cada despliegue el pipeline escribe esos valores en el Secret `house-finder-secrets`
 con `kubectl patch --type merge`, de modo que **no borra** `APIFY_TOKEN`,
 `DEEPSEEK_API_KEY` ni el resto. No hace falta ningún `kubectl` manual: basta con
 `git push` a `main` (o lanzar el workflow a mano con *Run workflow*).
 
-Si `ALERTS_ENABLED` vuelve a `"false"`, el paso se salta y no toca los secretos. Si está
-a `"true"` y falta `NTFY_TOPIC`, el pipeline se detiene **antes** de aplicar los manifiestos
-con un error explícito.
+El email es opt-in (`EMAIL_ALERTS_ENABLED: "false"` por defecto). Para activarlo, define
+`EMAIL_SMTP_HOST` en el ConfigMap, guarda los secretos de email indicados arriba y cambia
+la opción a `"true"`. El pipeline valida la configuración antes de desplegar y sincroniza
+los valores con merge patch, sin mostrar los secretos ni borrar otras claves. Sin
+configuración completa, falla antes de aplicar los manifiestos.
+
+Si ambos canales están desactivados, el paso se salta y no toca los secretos. Si
+`ALERTS_ENABLED` está a `"true"` y falta `NTFY_TOPIC`, el pipeline se detiene **antes** de
+aplicar los manifiestos con un error explícito.
 
 Instala la app **ntfy** en el móvil (App Store / Google Play) y suscríbete al mismo topic.
 Ojo: ntfy distingue **mayúsculas de minúsculas**; copia el topic, no lo teclees.

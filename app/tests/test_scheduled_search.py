@@ -35,6 +35,7 @@ def build(
     repository: InMemoryListingRepository | None = None,
     clock: MutableClock | None = None,
     notifier: FakeNotifier | None = None,
+    additional_notifiers: tuple[FakeNotifier, ...] = (),
     alert_click_url: str | None = None,
 ) -> tuple[ScheduledSearchService, FakeScraper, RecordingLogger]:
     clock = clock or MutableClock(date(2026, 11, 4))
@@ -52,7 +53,9 @@ def build(
         search_service,
         repository,
         SearchCriteria(location="Madrid"),
-        notifier=notifier,
+        notifiers=tuple(
+            item for item in (notifier, *additional_notifiers) if item is not None
+        ),
         alert_click_url=alert_click_url,
         logger=logger,
         today=clock,
@@ -214,7 +217,7 @@ async def test_a_manual_run_does_not_become_the_reference_for_new_listings() -> 
         search_service,
         repository,
         SearchCriteria(location="Madrid"),
-        notifier=notifier,
+        notifiers=(notifier,),
         logger=RecordingLogger(),
         today=clock,
     )
@@ -235,6 +238,23 @@ async def test_a_failed_alert_does_not_break_the_daily_job() -> None:
     assert failed is not None
     assert failed["level"] == "exception"
     assert failed["error_code"] == "NOTIFICATION_FAILURE"
+
+
+async def test_a_failed_channel_does_not_prevent_other_alert_channels() -> None:
+    failed_notifier = FakeNotifier(error=RuntimeError("ntfy caído"))
+    working_notifier = FakeNotifier()
+    service, _, logger = build(
+        notifier=failed_notifier,
+        additional_notifiers=(working_notifier,),
+    )
+
+    result = await service.run_daily_job()
+
+    assert result is not None
+    assert len(working_notifier.digests) == 1
+    failed = logger.find("listing_alert_failed")
+    assert failed is not None
+    assert failed["channel"] == "fake"
 
 
 async def test_configured_dashboard_url_is_the_notification_target() -> None:

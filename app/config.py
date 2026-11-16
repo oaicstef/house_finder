@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import date
+from email.utils import parseaddr
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -47,6 +48,24 @@ DEFAULT_SEARCH_PROFILE: dict[str, Any] = {
 }
 
 DEFAULT_SEARCH_PROFILE_JSON = json.dumps(DEFAULT_SEARCH_PROFILE, ensure_ascii=False)
+
+
+def _is_email_address(value: str) -> bool:
+    """Valida una dirección simple y rechaza cabeceras/inyección multilínea."""
+    address = value.strip()
+    parsed = parseaddr(address)[1]
+    if parsed != address or any(char.isspace() or ord(char) < 32 for char in address):
+        return False
+    local, separator, domain = address.rpartition("@")
+    return bool(
+        separator
+        and local
+        and "." in domain
+        and not domain.startswith(".")
+        and not domain.endswith(".")
+        and ".." not in domain
+    )
+
 
 # Variable de entorno -> atributo del modelo.
 REQUIRED_SECRETS: dict[str, str] = {
@@ -146,6 +165,17 @@ class Settings(BaseSettings):
     #: URL que abre la notificación al tocarla (vacío = la primera vivienda nueva).
     alert_click_url: str | None = None
 
+    # --- Alertas por correo (SMTP) ----------------------------------------
+    email_alerts_enabled: bool = False
+    email_smtp_host: str = ""
+    email_smtp_port: int = Field(default=587, ge=1, le=65535)
+    email_smtp_username: str | None = None
+    email_smtp_password: str | None = None
+    email_smtp_starttls: bool = True
+    email_smtp_timeout_seconds: float = Field(default=15.0, gt=0)
+    email_from: str = ""
+    email_to: str = ""
+
     relevance_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     # Directorio donde persistir los resultados (vacío = solo en memoria).
     results_dir: str = "data/results"
@@ -172,6 +202,8 @@ class Settings(BaseSettings):
         "daily_min_year_built",
         "daily_max_energy_rating",
         "ntfy_token",
+        "email_smtp_username",
+        "email_smtp_password",
         "alert_click_url",
         "search_profile_json",
         "search_profile_file",
@@ -202,6 +234,11 @@ class Settings(BaseSettings):
             )
         return topic
 
+    @field_validator("email_smtp_host", "email_from", "email_to")
+    @classmethod
+    def _strip_email_settings(cls, value: str) -> str:
+        return value.strip()
+
     @field_validator("geocoding_base_url", "ntfy_base_url")
     @classmethod
     def _check_service_base_url(cls, value: str, info: Any) -> str:
@@ -218,6 +255,48 @@ class Settings(BaseSettings):
             raise ConfigurationException(
                 "ALERTS_ENABLED=true requiere NTFY_TOPIC",
                 details={"missing": ["NTFY_TOPIC"]},
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_email_alerts(self) -> "Settings":
+        """El correo solo requiere credenciales SMTP cuando se activa."""
+        if not self.email_alerts_enabled:
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("EMAIL_SMTP_HOST", self.email_smtp_host),
+                ("EMAIL_FROM", self.email_from),
+                ("EMAIL_TO", self.email_to),
+            )
+            if not (value or "").strip()
+        ]
+        if missing:
+            raise ConfigurationException(
+                "EMAIL_ALERTS_ENABLED=true requiere la configuración de correo",
+                details={"missing": missing},
+            )
+
+        if bool(self.email_smtp_username) != bool(self.email_smtp_password):
+            raise ConfigurationException(
+                "EMAIL_SMTP_USERNAME y EMAIL_SMTP_PASSWORD deben configurarse juntos",
+                details={"missing_pair": ["EMAIL_SMTP_USERNAME", "EMAIL_SMTP_PASSWORD"]},
+            )
+        if self.email_smtp_username and not self.email_smtp_starttls:
+            raise ConfigurationException(
+                "La autenticación SMTP requiere EMAIL_SMTP_STARTTLS=true",
+                details={"required": ["EMAIL_SMTP_STARTTLS"]},
+            )
+
+        addresses = [self.email_from, *self.email_recipients]
+        if not self.email_recipients or any(
+            not _is_email_address(address) for address in addresses
+        ):
+            raise ConfigurationException(
+                "EMAIL_FROM y EMAIL_TO deben contener direcciones de correo válidas",
+                details={"invalid_fields": ["EMAIL_FROM", "EMAIL_TO"]},
             )
         return self
 
@@ -306,6 +385,17 @@ class Settings(BaseSettings):
     def json_logs(self) -> bool:
         """JSON en producción, consola legible en el resto de entornos."""
         return self.environment == "production"
+
+    @property
+    def email_recipients(self) -> tuple[str, ...]:
+        """Destinatarios SMTP separados por comas."""
+        return tuple(
+            dict.fromkeys(
+                address.strip()
+                for address in self.email_to.split(",")
+                if address.strip()
+            )
+        )
 
     @property
     def resolved_search_profile_file(self) -> str | None:

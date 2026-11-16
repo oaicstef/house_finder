@@ -902,6 +902,35 @@ Si el job ya se ejecutó hoy devuelve `{"executed": false, "reason":
 - Si el servidor respondió `200` (`alert_delivered` en el log) el mensaje **salió**; un
   retraso de minutos en iPhone es normal cuando la app está en segundo plano.
 
+### 10.2 Alertas por email
+
+El job puede enviar el mismo resumen de viviendas nuevas por SMTP, además de ntfy.
+El correo está desactivado por defecto y no requiere una cuenta ni credenciales mientras
+`EMAIL_ALERTS_ENABLED=false`. Para activarlo, configura:
+
+```dotenv
+EMAIL_ALERTS_ENABLED=true
+EMAIL_SMTP_HOST=smtp.example.com
+EMAIL_SMTP_PORT=587
+EMAIL_SMTP_STARTTLS=true
+EMAIL_SMTP_USERNAME=
+EMAIL_SMTP_PASSWORD=
+EMAIL_SMTP_TIMEOUT_SECONDS=15
+EMAIL_FROM=house-finder@example.com
+EMAIL_TO=destino@example.com,otro@example.com
+```
+
+`EMAIL_SMTP_USERNAME` y `EMAIL_SMTP_PASSWORD` son opcionales, pero deben definirse juntos.
+El host, remitente y al menos un destinatario son obligatorios al activar el canal; las
+direcciones múltiples se separan por comas. El envío se realiza fuera del event loop y
+un fallo SMTP queda registrado sin impedir la alerta ntfy ni invalidar la búsqueda.
+
+En Kubernetes, define `EMAIL_SMTP_HOST` y activa `EMAIL_ALERTS_ENABLED` en
+`deploy/k8s/configmap.yaml`. Guarda `EMAIL_FROM`, `EMAIL_TO` y, si aplica, las
+credenciales SMTP como GitHub Actions Secrets con esos mismos nombres. El pipeline las
+sincroniza a `house-finder-secrets`; nunca añadas direcciones ni credenciales al
+ConfigMap o al repositorio.
+
 ## 11. Perfil de búsqueda configurable y UI
 
 El perfil lo usan el job diario, la UI y `POST /api/v1/search-profile/run`. El valor de

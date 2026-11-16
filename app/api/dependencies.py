@@ -29,6 +29,7 @@ from app.domain.ports import (
     SearchProfileStore,
     SearchServiceProtocol,
 )
+from app.infrastructure.alerts.email_notifier import EmailNotifier
 from app.infrastructure.alerts.ntfy_notifier import NtfyNotifier
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
 from app.infrastructure.geocoding.carto_ciudad_locator import CartoCiudadPostalCodeLocator
@@ -67,8 +68,8 @@ class ServiceContainer:
     scheduled_search_service: ScheduledSearchServiceProtocol
     search_profile_service: SearchProfileService
     search_profile_store: SearchProfileStore
-    #: ``None`` cuando ``ALERTS_ENABLED=false`` (el job diario no envía nada).
-    alert_notifier: AlertNotifierPort | None = None
+    #: Canales configurados para las alertas del job diario.
+    alert_notifiers: tuple[AlertNotifierPort, ...] = ()
 
 
 def build_container(settings: Settings | None = None) -> ServiceContainer:
@@ -116,15 +117,31 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
 
     profile_service = SearchProfileService(profile_store, default_profile)
 
-    # Alertas push de viviendas nuevas (ntfy: app móvil iOS y Android).
-    alert_notifier: AlertNotifierPort | None = None
+    # Canales de alerta de viviendas nuevas (ntfy y/o correo).
+    alert_notifiers: list[AlertNotifierPort] = []
     if resolved.alerts_enabled:
-        alert_notifier = NtfyNotifier(
-            resolved.ntfy_topic,
-            base_url=resolved.ntfy_base_url,
-            token=resolved.ntfy_token,
-            priority=resolved.ntfy_priority,
-            logger=get_logger("app.alerts"),
+        alert_notifiers.append(
+            NtfyNotifier(
+                resolved.ntfy_topic,
+                base_url=resolved.ntfy_base_url,
+                token=resolved.ntfy_token,
+                priority=resolved.ntfy_priority,
+                logger=get_logger("app.alerts"),
+            )
+        )
+    if resolved.email_alerts_enabled:
+        alert_notifiers.append(
+            EmailNotifier(
+                host=resolved.email_smtp_host,
+                port=resolved.email_smtp_port,
+                sender=resolved.email_from,
+                recipients=resolved.email_recipients,
+                username=resolved.email_smtp_username,
+                password=resolved.email_smtp_password,
+                starttls=resolved.email_smtp_starttls,
+                timeout_seconds=resolved.email_smtp_timeout_seconds,
+                logger=get_logger("app.alerts.email"),
+            )
         )
 
     scheduled_search_service = ScheduledSearchService(
@@ -133,7 +150,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         resolved.build_daily_criteria(),
         # La UI puede cambiar el perfil: el cron lo resuelve en cada ejecución.
         criteria_provider=profile_service.resolve_criteria,
-        notifier=alert_notifier,
+        notifiers=alert_notifiers,
         alert_click_url=resolved.alert_click_url,
     )
 
@@ -146,7 +163,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         scheduled_search_service=scheduled_search_service,
         search_profile_service=profile_service,
         search_profile_store=profile_store,
-        alert_notifier=alert_notifier,
+        alert_notifiers=tuple(alert_notifiers),
     )
 
 

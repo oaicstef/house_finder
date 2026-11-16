@@ -115,3 +115,89 @@ def test_blank_ntfy_token_and_click_url_become_none() -> None:
 
     assert settings.ntfy_token is None
     assert settings.alert_click_url is None
+
+
+def test_email_alerts_are_off_by_default() -> None:
+    settings = build_settings()
+
+    assert settings.email_alerts_enabled is False
+    assert settings.email_smtp_port == 587
+    assert settings.email_smtp_starttls is True
+
+
+def test_enabling_email_alerts_requires_smtp_and_addresses() -> None:
+    with pytest.raises(ConfigurationException) as raised:
+        build_settings(email_alerts_enabled=True)
+
+    assert raised.value.code == "CONFIGURATION_ERROR"
+    assert set(raised.value.details["missing"]) == {
+        "EMAIL_SMTP_HOST",
+        "EMAIL_FROM",
+        "EMAIL_TO",
+    }
+
+
+def test_email_alert_settings_parse_multiple_recipients() -> None:
+    settings = build_settings(
+        email_alerts_enabled=True,
+        email_smtp_host="smtp.example.com",
+        email_smtp_username="mailer",
+        email_smtp_password="secret",
+        email_from="alerts@example.com",
+        email_to="one@example.com, two@example.com",
+    )
+
+    assert settings.email_recipients == ("one@example.com", "two@example.com")
+
+
+def test_email_authentication_is_optional() -> None:
+    settings = build_settings(
+        email_alerts_enabled=True,
+        email_smtp_host="smtp.example.com",
+        email_from="alerts@example.com",
+        email_to="one@example.com",
+    )
+
+    assert settings.email_smtp_username is None
+    assert settings.email_smtp_password is None
+
+
+def test_email_smtp_credentials_must_be_configured_as_a_pair() -> None:
+    with pytest.raises(ConfigurationException) as raised:
+        build_settings(
+            email_alerts_enabled=True,
+            email_smtp_host="smtp.example.com",
+            email_smtp_username="mailer",
+            email_from="alerts@example.com",
+            email_to="one@example.com",
+        )
+
+    assert raised.value.code == "CONFIGURATION_ERROR"
+    assert "EMAIL_SMTP_USERNAME" in str(raised.value)
+
+
+def test_email_authentication_requires_starttls() -> None:
+    with pytest.raises(ConfigurationException) as raised:
+        build_settings(
+            email_alerts_enabled=True,
+            email_smtp_host="smtp.example.com",
+            email_smtp_username="mailer",
+            email_smtp_password="smtp-password",
+            email_smtp_starttls=False,
+            email_from="alerts@example.com",
+            email_to="one@example.com",
+        )
+
+    assert raised.value.code == "CONFIGURATION_ERROR"
+    assert "EMAIL_SMTP_STARTTLS" in str(raised.value)
+
+
+@pytest.mark.parametrize("address", ["not-an-email", "bad\r\nBcc: other@example.com"])
+def test_email_addresses_reject_invalid_values(address: str) -> None:
+    with pytest.raises(ConfigurationException):
+        build_settings(
+            email_alerts_enabled=True,
+            email_smtp_host="smtp.example.com",
+            email_from="alerts@example.com",
+            email_to=address,
+        )

@@ -107,8 +107,8 @@ class RepositoryException(DomainException):
 
 
 class NotificationException(DomainException):
-    """Fallo al entregar una alerta push (servicio de notificaciones caído)."""
+    """Fallo al entregar una notificación."""
 
     code = "NOTIFICATION_FAILURE"
     http_status = 502
-    default_message = "No se ha podido enviar la alerta"
+    default_message = "No se ha podido enviar la notificación"

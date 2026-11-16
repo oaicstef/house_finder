@@ -105,35 +105,66 @@ jobs:
           fi
 
       - name: Sync alert credentials into the app Secret
-        # El topic de ntfy es un secreto y no puede viajar en el repositorio.
-        # Se guarda en GitHub (Settings > Secrets > NTFY_TOPIC) y el pipeline lo
-        # escribe en el Secret del clúster en cada despliegue, con `patch --type
-        # merge` para no borrar APIFY_TOKEN, DEEPSEEK_API_KEY, etc.
+        # Las credenciales y direcciones de alertas se guardan en GitHub Secrets
+        # y se sincronizan con merge patch, preservando los secretos de la app.
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          EMAIL_SMTP_USERNAME: ${{ secrets.EMAIL_SMTP_USERNAME }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           set -euo pipefail
-          if ! grep -Eq '^[[:space:]]*ALERTS_ENABLED:[[:space:]]*"?true"?[[:space:]]*$' deploy/k8s/configmap.yaml; then
-            echo "ALERTS_ENABLED desactivado en el ConfigMap: no se tocan los secretos de alertas."
+          ntfy_enabled=false
+          email_enabled=false
+          if grep -Eq '^[[:space:]]*ALERTS_ENABLED:[[:space:]]*"?true"?[[:space:]]*$' deploy/k8s/configmap.yaml; then
+            ntfy_enabled=true
+          fi
+          if grep -Eq '^[[:space:]]*EMAIL_ALERTS_ENABLED:[[:space:]]*"?true"?[[:space:]]*$' deploy/k8s/configmap.yaml; then
+            email_enabled=true
+          fi
+          if [ "$ntfy_enabled" = false ] && [ "$email_enabled" = false ]; then
+            echo "Alertas desactivadas en el ConfigMap; no se sincronizan sus secretos."
             exit 0
           fi
-          if [ -z "${NTFY_TOPIC:-}" ]; then
-            echo "::error::ALERTS_ENABLED=true pero falta el secreto NTFY_TOPIC del repositorio. El pod fallaría con CONFIGURATION_ERROR."
+          if [ "$ntfy_enabled" = true ] && [ -z "${NTFY_TOPIC:-}" ]; then
+            echo "::error::ALERTS_ENABLED=true pero falta el secreto NTFY_TOPIC del repositorio."
             exit 1
+          fi
+          if [ "$email_enabled" = true ]; then
+            if ! grep -Eq '^[[:space:]]*EMAIL_SMTP_HOST:[[:space:]]*"[^"]+"' deploy/k8s/configmap.yaml; then
+              echo "::error::EMAIL_ALERTS_ENABLED=true requiere EMAIL_SMTP_HOST en el ConfigMap."
+              exit 1
+            fi
+            if [ -z "${EMAIL_FROM:-}" ] || [ -z "${EMAIL_TO:-}" ]; then
+              echo "::error::EMAIL_ALERTS_ENABLED=true requiere los secretos EMAIL_FROM y EMAIL_TO."
+              exit 1
+            fi
+            if { [ -n "${EMAIL_SMTP_USERNAME:-}" ] && [ -z "${EMAIL_SMTP_PASSWORD:-}" ]; } || \
+               { [ -z "${EMAIL_SMTP_USERNAME:-}" ] && [ -n "${EMAIL_SMTP_PASSWORD:-}" ]; }; then
+              echo "::error::EMAIL_SMTP_USERNAME y EMAIL_SMTP_PASSWORD deben definirse juntos."
+              exit 1
+            fi
           fi
           if ! kubectl -n house-finder get secret house-finder-secrets >/dev/null 2>&1; then
             echo "::error::No existe el Secret house-finder-secrets (APIFY_TOKEN, DEEPSEEK_API_KEY...). Créalo antes de desplegar."
             exit 1
           fi
-          payload=$(python3 -c 'import json,os;d={"NTFY_TOPIC":os.environ["NTFY_TOPIC"]};t=os.environ.get("NTFY_TOKEN");d.update({"NTFY_TOKEN":t} if t else {});print(json.dumps({"stringData":d}))')
+          payload=$(NTFY_ENABLED="$ntfy_enabled" EMAIL_ENABLED="$email_enabled" python3 -c 'import json,os; d={}; n=os.environ["NTFY_ENABLED"]=="true"; e=os.environ["EMAIL_ENABLED"]=="true"; d.update({"NTFY_TOPIC":os.environ["NTFY_TOPIC"],"NTFY_TOKEN":os.environ.get("NTFY_TOKEN","")} if n else {}); d.update({k:os.environ.get(k,"") for k in ("EMAIL_SMTP_USERNAME","EMAIL_SMTP_PASSWORD","EMAIL_FROM","EMAIL_TO")} if e else {}); print(json.dumps({"stringData":d}))')
           kubectl -n house-finder patch secret house-finder-secrets --type merge -p "$payload"
-          echo "Secret de alertas sincronizado (topic de ${#NTFY_TOPIC} caracteres)."
-          # Reinicia el pod solo si el topic cambió: la anotación es estable entre
-          # despliegues con el mismo valor, así que no provoca rollouts de más.
-          kubectl -n house-finder annotate deployment/house-finder \
-            house-finder.io/alert-topic-sha="$(printf '%s' "$NTFY_TOPIC" | sha256sum | cut -c1-12)" \
-            --overwrite 2>/dev/null || true
+          echo "Secret de notificaciones sincronizado; los valores no se muestran."
+          if [ "$ntfy_enabled" = true ]; then
+            kubectl -n house-finder annotate deployment/house-finder \
+              house-finder.io/alert-topic-sha="$(printf '%s' "$NTFY_TOPIC" | sha256sum | cut -c1-12)" \
+              --overwrite 2>/dev/null || true
+          fi
+          if [ "$email_enabled" = true ]; then
+            email_sha="$(printf '%s\n' "${EMAIL_SMTP_USERNAME:-}" "${EMAIL_SMTP_PASSWORD:-}" "$EMAIL_FROM" "$EMAIL_TO" | sha256sum | cut -c1-12)"
+            kubectl -n house-finder annotate deployment/house-finder \
+              house-finder.io/email-config-sha="$email_sha" \
+              --overwrite 2>/dev/null || true
+          fi
 
       - name: Apply Kubernetes manifests
         run: kubectl apply -k deploy/k8s

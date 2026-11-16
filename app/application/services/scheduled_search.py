@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from datetime import date
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Sequence
 
 from app.application.services.listing_alerts import build_digest, select_new_listings
 from app.domain.exceptions import DomainException
@@ -33,7 +33,7 @@ class ScheduledSearchService:
         criteria: SearchCriteria,
         *,
         criteria_provider: Callable[[], Awaitable[SearchCriteria]] | None = None,
-        notifier: AlertNotifierPort | None = None,
+        notifiers: Sequence[AlertNotifierPort] = (),
         alert_click_url: str | None = None,
         logger: Any | None = None,
         today: Callable[[], date] | None = None,
@@ -43,8 +43,8 @@ class ScheduledSearchService:
         self._criteria = criteria
         # El perfil puede cambiar desde la UI: se resuelve al inicio de cada ejecución.
         self._criteria_provider = criteria_provider
-        # Sin notificador configurado el job funciona igual, sin alertas.
-        self._notifier = notifier
+        # Cada canal es independiente: un fallo no impide intentar los demás.
+        self._notifiers = tuple(notifiers)
         self._alert_click_url = alert_click_url
         self._logger = logger or get_logger("app.scheduler")
         self._today = today or date.today
@@ -140,8 +140,8 @@ class ScheduledSearchService:
         result: SearchResult,
         previous: SearchResult | None,
     ) -> None:
-        """Envía un único resumen con las viviendas que no salieron la vez anterior."""
-        if self._notifier is None:
+        """Envía el resumen de viviendas ausentes de la ejecución anterior."""
+        if not self._notifiers:
             return
 
         new_listings = select_new_listings(result, previous)
@@ -158,27 +158,30 @@ class ScheduledSearchService:
             result.criteria,
             dashboard_url=self._alert_click_url,
         )
-        try:
-            await self._notifier.send_digest(
-                title=digest.title,
-                message=digest.message,
-                click_url=digest.click_url,
-            )
-        except Exception:  # una alerta caída no invalida la búsqueda ya guardada
-            self._logger.exception(
-                "listing_alert_failed",
-                search_id=str(result.search_id),
-                error_code="NOTIFICATION_FAILURE",
-                new_count=len(new_listings),
-            )
-            return
+        for notifier in self._notifiers:
+            try:
+                await notifier.send_digest(
+                    title=digest.title,
+                    message=digest.message,
+                    click_url=digest.click_url,
+                )
+            except Exception:  # un canal caído no invalida el resultado ni los demás
+                self._logger.exception(
+                    "listing_alert_failed",
+                    search_id=str(result.search_id),
+                    channel=notifier.channel,
+                    error_code="NOTIFICATION_FAILURE",
+                    new_count=len(new_listings),
+                )
+                continue
 
-        self._logger.info(
-            "listing_alert_sent",
-            search_id=str(result.search_id),
-            new_count=len(new_listings),
-            total_count=result.matched_count,
-        )
+            self._logger.info(
+                "listing_alert_sent",
+                search_id=str(result.search_id),
+                channel=notifier.channel,
+                new_count=len(new_listings),
+                total_count=result.matched_count,
+            )
 
     async def scheduler_entrypoint(self) -> None:
         """Callable registrado en APScheduler: nunca propaga excepciones."""
