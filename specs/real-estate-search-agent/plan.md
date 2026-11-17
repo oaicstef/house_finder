@@ -1274,3 +1274,113 @@ captura el fallo por canal para que no invalide la búsqueda ni los otros canale
 - El email permanece opt-in (`EMAIL_ALERTS_ENABLED=false`) porque no se han configurado
   un servidor/destinatario ni credenciales SMTP; al habilitarlo, el arranque y el pipeline
   validan la configuración requerida.
+
+## Revisión 2026-11-17 — prueba E2E SMTP con anuncio sintético
+
+### Objetivo
+
+Añadir una prueba real, manual y aislada del envío SMTP que recorra la selección de una
+vivienda nueva, la creación del digest y el adaptador de correo. La prueba usará un anuncio
+sintético y los secretos SMTP ya configurados en GitHub Actions, sin scraper, DeepSeek ni
+la ejecución diaria de producción.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Script de prueba que conecta `ScheduledSearchService` real a un buscador/repositorio
+  sintéticos, de modo que un anuncio sintético sea seleccionado como nuevo.
+- Envío del digest resultante mediante `EmailNotifier` real y SMTP configurado.
+- Workflow manual `workflow_dispatch` para ejecutar la prueba con secretos, sin imprimir
+  direcciones ni credenciales.
+
+#### Fuera del alcance (out of scope)
+
+- Añadir o modificar endpoints públicos para enviar correos de prueba.
+- Ejecutar Apify, DeepSeek, scrapers o el job diario como parte de esta prueba.
+- Cambiar la configuración de producción o enviar alertas de viviendas reales.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Búsqueda | Fake que devuelve exactamente un `SearchResult` sintético | Ejercita el flujo del job sin tráfico ni costes de terceros. |
+| Persistencia | Fake sin ejecuciones previas ni ejecuciones del día | Asegura que el anuncio se considera nuevo sin tocar el repositorio de producción. |
+| Servicio de notificación | `ScheduledSearchService` y `EmailNotifier` reales | Valida selección, digest, STARTTLS/autenticación y aceptación SMTP. |
+| Ejecución | Workflow `workflow_dispatch`, solo con secretos existentes | Permite probar el SMTP real sin exponer secretos en el checkout local. |
+| Destinatarios | Secret `EMAIL_TO` configurado | El correo de prueba llega al destino elegido sin añadir direcciones al repo. |
+
+### Contratos de interfaces (ports)
+
+No se modifican los ports de producción. El script implementará dobles mínimos del
+`SearchServiceProtocol` y `ListingRepository`, mientras que el notificador real satisface
+`AlertNotifierPort`.
+
+### Modelo de datos
+
+Sin cambios de esquema. El script construye un `Listing` marcado claramente como sintético,
+lo envuelve en un `ScoredListing` y un `SearchResult` de una sola vivienda.
+
+### Endpoints de la API
+
+Sin cambios. La ejecución se inicia exclusivamente de forma manual en GitHub Actions.
+
+### Flujo del job programado
+
+1. Construir criterios y una vivienda sintética sin acceder a portales.
+2. Ejecutar `ScheduledSearchService.run_daily_job()` con dobles de búsqueda/repositorio.
+3. Confirmar que el anuncio se selecciona como nuevo y se convierte en digest.
+4. Enviar el digest una vez por SMTP real; fallar la ejecución si SMTP rechaza el mensaje.
+
+### Estrategia de logging
+
+Mostrar solo el resultado genérico y el conteo de destinatarios. No registrar direcciones,
+host autenticado, asunto, mensaje ni credenciales.
+
+### Jerarquía de excepciones
+
+Reutilizar `NotificationException` del adaptador. Cualquier fallo SMTP termina la acción
+con error, en lugar de producir un falso positivo.
+
+### Plan de tests
+
+- Suite local enfocada de `test_scheduled_search.py` y `test_email_notifier.py` para
+  verificar el flujo de anuncio nuevo y el aislamiento de fallos con SMTP falso.
+- Ejecutar el script de E2E mediante el workflow manual; éxito significa que el servidor
+  SMTP aceptó el mensaje. Comprobar la llegada en el buzón configurado.
+- Validar sintaxis del workflow y `git diff --check`.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El test envía un correo real | Mensaje de prueba a los destinatarios configurados | Usar asunto y anuncio inequívocamente sintéticos y ejecutar solo manualmente. |
+| Secretos ausentes o incorrectos | Fallo de la prueba | Fallar explícitamente por validación o rechazo SMTP; no imprimir valores. |
+| El endpoint manual actual ejecuta la búsqueda completa | Coste y alteración de la idempotencia diaria | No usar el endpoint; el workflow solo instancia fakes y el notifier SMTP. |
+
+### Orden de implementación
+
+1. [x] Añadir `scripts/run_email_notification_e2e.py` con servicio/notificadores reales y
+   búsqueda/repositorio sintéticos; criterio: un único anuncio sintético llega al port de
+   correo y los valores sensibles nunca se imprimen.
+2. [x] Añadir `.github/workflows/email-notification-e2e.yml`; criterio: solo es manual y
+   proporciona secretos SMTP como variables de entorno sin registrarlos.
+3. [x] Ejecutar tests locales y validaciones; criterio: suite focalizada y validadores
+   pasan.
+4. [ ] Ejecutar el workflow manual con los secretos configurados; criterio: SMTP acepta
+   el mensaje y el log confirma éxito sin datos personales.
+
+### Criterios de aceptación
+
+- [ ] El test sintetiza una única vivienda nueva y recorre `ScheduledSearchService`,
+  `build_digest` y `EmailNotifier` reales.
+- [ ] No se invocan endpoints de búsqueda, scrapers, Apify o DeepSeek.
+- [ ] La acción manual informa aceptación SMTP sin filtrar secretos/destinatarios.
+- [ ] La suite enfocada y las validaciones del workflow pasan.
+
+### Checklist de progreso
+
+- [x] 1. Harness E2E de vivienda sintética.
+- [x] 2. Workflow manual protegido por secretos.
+- [x] 3. Validación local.
+- [ ] 4. Prueba real SMTP y confirmación de recepción.

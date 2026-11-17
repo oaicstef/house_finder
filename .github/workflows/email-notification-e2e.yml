@@ -1,0 +1,40 @@
+name: Email notification E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  email-notification-e2e:
+    name: Send synthetic listing through SMTP
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run synthetic listing email E2E
+        run: python -m scripts.run_email_notification_e2e
+        env:
+          EMAIL_ALERTS_ENABLED: "true"
+          EMAIL_SMTP_HOST: "smtp.gmail.com"
+          EMAIL_SMTP_PORT: "587"
+          EMAIL_SMTP_STARTTLS: "true"
+          EMAIL_SMTP_USERNAME: ${{ secrets.EMAIL_SMTP_USERNAME }}
+          EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
+          EMAIL_SMTP_TIMEOUT_SECONDS: "15"
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
