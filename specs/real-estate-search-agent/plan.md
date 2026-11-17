@@ -1394,3 +1394,139 @@ con error, en lugar de producir un falso positivo.
   `listing_alert_sent` con `new_count=1`, sin mostrar direcciones ni credenciales.
 - El servidor SMTP aceptó el mensaje. La llegada final a las bandejas de entrada no se
   puede observar desde este entorno.
+
+## Revisión 2026-11-17 — digest completo en el primer email
+
+### Objetivo
+
+Cuando se habilite el canal SMTP, su primer envío exitoso debe incluir todos los anuncios
+clasificados del resultado actual, aunque ya existan búsquedas programadas anteriores a
+la activación. Ese email inicial no tendrá el límite habitual de diez entradas. Tras
+registrar ese envío, los emails siguientes vuelven a incluir únicamente anuncios nuevos.
+El estado debe sobrevivir a reinicios del pod.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Distinguir el primer digest SMTP exitoso del historial de búsquedas.
+- Persistir un marcador no sensible junto al almacenamiento duradero de resultados.
+- Mantener la selección actual de novedades para ntfy y para los emails posteriores.
+- No marcar el primer email como enviado si SMTP falla.
+- Documentar el comportamiento y probar persistencia, fallos y selección por canal.
+
+#### Fuera del alcance (out of scope)
+
+- Reenviar todos los anuncios en cada ejecución o en cada reinicio.
+- Cambiar la comparación de anuncios nuevos para ntfy.
+- Añadir configuración, endpoints o migraciones de base de datos.
+- Reenviar el digest completo cuando el marcador ya confirma un envío SMTP exitoso.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Regla de primera entrega | La primera entrega SMTP exitosa envía todos los anuncios de la ejecución actual | Permite activar email aunque ya exista historial de ntfy/búsquedas. |
+| Límite del digest inicial | Incluir todas las viviendas clasificadas, sin el límite habitual de diez | Cumple literalmente el requisito de incluir todos los anuncios del primer envío. |
+| Estado | Puerto específico de estado de email, con adaptador JSON atómico bajo el volumen persistente | Desacopla el servicio de aplicación y conserva el marcador tras reinicios. |
+| Canal push | ntfy sigue recibiendo solo las novedades relativas a la ejecución anterior | El cambio se limita al primer digest de email. |
+| Fallo SMTP | No marcar el estado; reintentar el digest completo en la siguiente ejecución | Evita perder el email inicial antes de una aceptación SMTP. |
+| Fallo al escribir el marcador después de SMTP | Registrar el fallo explícitamente; permitir un posible reenvío completo | Semántica at-least-once, sin afirmar que el estado quedó persistido. |
+| Almacenamiento en memoria | Usarlo solo cuando `RESULTS_DIR` está desactivado | Coincide con el modo de ejecución que tampoco persiste resultados. |
+
+### Contratos de interfaces (ports)
+
+Añadir a `app/domain/ports.py` un `EmailNotificationStatePort` con operaciones asíncronas
+para consultar y marcar si ya se aceptó el digest inicial. Implementarlo en infraestructura
+con adaptadores JSON persistente y en memoria. No se modifican `AlertNotifierPort` ni
+`ListingRepository`.
+
+### Modelo de datos
+
+No cambian entidades ni DTOs. El fichero de estado contendrá únicamente un booleano que
+indica si el digest inicial de email fue aceptado; no incluirá direcciones, anuncios ni
+credenciales.
+
+### Endpoints de la API
+
+Sin cambios.
+
+### Flujo del job programado
+
+1. Calcular las novedades con la comparación existente.
+2. Si el digest inicial de email sigue pendiente, enviar a email todos los anuncios
+   clasificados del resultado actual (sin límite de diez) y a ntfy solo las novedades.
+3. Marcar el digest inicial como enviado únicamente después de que SMTP retorne éxito.
+4. En ejecuciones posteriores, enviar a cada canal solo las novedades.
+5. Si no hay anuncios, no enviar ni marcar el digest inicial.
+
+### Estrategia de logging
+
+Registrar consultas/escrituras fallidas del marcador con `search_id`, canal y
+`error_code`; no registrar contenido del fichero, direcciones ni anuncios. Mantener el
+`new_count` real y distinguir el número enviado cuando el email inicial contiene más
+anuncios que los canales push.
+
+### Jerarquía de excepciones
+
+El adaptador de estado traduce errores de lectura/escritura a `RepositoryException`.
+El servicio registra esos errores y aplica semántica at-least-once: ante una lectura
+fallida trata el digest inicial como pendiente; ante una escritura fallida deja el
+marcador sin confirmar. Un fallo SMTP conserva el comportamiento actual por canal.
+
+### Plan de tests
+
+- El primer email incluye todos los anuncios aunque exista una ejecución anterior y el
+  conjunto supere diez; ntfy incluye solo los anuncios nuevos.
+- Tras el primer envío exitoso, otro email incluye solo nuevas viviendas.
+- Un fallo SMTP no marca el digest inicial como enviado.
+- El marcador JSON se conserva al reconstruir el adaptador y un fichero inválido da error
+  explícito.
+- El contenedor elige estado persistente con `RESULTS_DIR` y en memoria sin él.
+- Ejecutar tests focalizados, suite completa y `git diff --check`.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El volumen persistente se pierde o se limpia | Se vuelve a enviar un digest completo | El marcador vive bajo el PVC de resultados y su pérdida implica semántica at-least-once. |
+| SMTP acepta el correo, pero falla la escritura del marcador | El siguiente job puede duplicar el digest completo | Registrar `email_initial_digest_state_write_failed`; priorizar no perder el primer aviso. |
+| Se envía un digest grande en la primera activación | Email extenso | El máximo de resultados ya está acotado; aplicar el límite habitual en notificaciones posteriores. |
+
+### Orden de implementación
+
+1. [x] Añadir el port y adaptadores persistente/en memoria — `app/domain/ports.py`,
+   `app/infrastructure/alerts/email_notification_state.py` — leer, marcar y persistir
+   solo el estado del digest inicial.
+2. [x] Integrar el estado y la selección por canal — `app/application/services/scheduled_search.py`,
+   `app/api/dependencies.py` — email inicial completo, ntfy sin cambios y posteriores solo
+   con novedades.
+3. [x] Añadir pruebas focalizadas — `app/tests/test_scheduled_search.py`,
+   `app/tests/test_email_notification_state.py`, `app/tests/test_alert_dependencies.py` —
+   comprobar primera entrega, persistencia, fallos y composición.
+4. [x] Documentar y validar — `docs/USAGE.md`, `docs/INFRASTRUCTURE.md` — explicar la
+   primera entrega y verificar suite/formatos.
+
+### Criterios de aceptación
+
+- [x] El primer email tras activar SMTP contiene todos los anuncios actuales aunque haya
+  búsquedas previas.
+- [x] ntfy y emails posteriores conservan la semántica de enviar solo novedades.
+- [x] El estado solo se confirma tras aceptar SMTP y sobrevive a reinicios con resultados
+  persistentes.
+- [x] Los fallos del estado se registran sin exponer información sensible.
+- [x] Tests focalizados, suite completa y `git diff --check` pasan.
+
+### Checklist de progreso
+
+- [x] 1. Port y almacenamiento duradero del estado inicial.
+- [x] 2. Integración de la regla por canal.
+- [x] 3. Tests de primera entrega, persistencia y fallo SMTP.
+- [x] 4. Documentación y validación.
+
+### Evidencia
+
+- `pytest -q` pasó con toda la suite; `compileall` y `git diff --check` también pasaron.
+- Se verificó que el primer digest SMTP no trunca resultados tras diez entradas, que ntfy
+  y los emails posteriores solo incluyen novedades y que los fallos SMTP no confirman el
+  marcador inicial.

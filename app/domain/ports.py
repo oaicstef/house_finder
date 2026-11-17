@@ -22,6 +22,7 @@ from app.domain.models import (
 __all__ = [
     "AlertNotifierPort",
     "ClassifierPort",
+    "EmailNotificationStatePort",
     "ListingRepository",
     "PostalCodeLocatorPort",
     "ScraperPort",
@@ -154,6 +155,18 @@ class AlertNotifierPort(Protocol):
         Raises:
             NotificationException: si el servicio de notificaciones falla.
         """
+        ...
+
+
+class EmailNotificationStatePort(Protocol):
+    """Estado de entrega del digest inicial por correo."""
+
+    async def has_sent_initial_digest(self) -> bool:
+        """Indica si SMTP ya aceptó el digest inicial."""
+        ...
+
+    async def mark_initial_digest_sent(self) -> None:
+        """Marca el digest inicial como entregado tras el éxito de SMTP."""
         ...
 
 

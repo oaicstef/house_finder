@@ -7,6 +7,7 @@ endpoints dependen de los puertos a través de ``Depends``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -23,6 +24,7 @@ from app.domain.models import SearchCriteria
 from app.domain.ports import (
     AlertNotifierPort,
     ClassifierPort,
+    EmailNotificationStatePort,
     ListingRepository,
     ScheduledSearchServiceProtocol,
     ScraperPort,
@@ -30,6 +32,10 @@ from app.domain.ports import (
     SearchServiceProtocol,
 )
 from app.infrastructure.alerts.email_notifier import EmailNotifier
+from app.infrastructure.alerts.email_notification_state import (
+    InMemoryEmailNotificationState,
+    JsonEmailNotificationState,
+)
 from app.infrastructure.alerts.ntfy_notifier import NtfyNotifier
 from app.infrastructure.classifiers.deepseek_classifier import DeepSeekListingClassifier
 from app.infrastructure.geocoding.carto_ciudad_locator import CartoCiudadPostalCodeLocator
@@ -70,6 +76,7 @@ class ServiceContainer:
     search_profile_store: SearchProfileStore
     #: Canales configurados para las alertas del job diario.
     alert_notifiers: tuple[AlertNotifierPort, ...] = ()
+    email_notification_state: EmailNotificationStatePort | None = None
 
 
 def build_container(settings: Settings | None = None) -> ServiceContainer:
@@ -119,6 +126,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
 
     # Canales de alerta de viviendas nuevas (ntfy y/o correo).
     alert_notifiers: list[AlertNotifierPort] = []
+    email_notification_state: EmailNotificationStatePort | None = None
     if resolved.alerts_enabled:
         alert_notifiers.append(
             NtfyNotifier(
@@ -130,6 +138,13 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
             )
         )
     if resolved.email_alerts_enabled:
+        if (resolved.results_dir or "").strip():
+            state_path = (
+                Path(resolved.results_dir).parent / "email-notification-state.json"
+            )
+            email_notification_state = JsonEmailNotificationState(state_path)
+        else:
+            email_notification_state = InMemoryEmailNotificationState()
         alert_notifiers.append(
             EmailNotifier(
                 host=resolved.email_smtp_host,
@@ -151,6 +166,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         # La UI puede cambiar el perfil: el cron lo resuelve en cada ejecución.
         criteria_provider=profile_service.resolve_criteria,
         notifiers=alert_notifiers,
+        email_notification_state=email_notification_state,
         alert_click_url=resolved.alert_click_url,
     )
 
@@ -164,6 +180,7 @@ def build_container(settings: Settings | None = None) -> ServiceContainer:
         search_profile_service=profile_service,
         search_profile_store=profile_store,
         alert_notifiers=tuple(alert_notifiers),
+        email_notification_state=email_notification_state,
     )
 
 

@@ -10,6 +10,9 @@ from app.application.services.scheduled_search import ScheduledSearchService
 from app.application.services.search_service import SearchService
 from app.domain.exceptions import ScraperException
 from app.domain.models import SearchCriteria, Trigger
+from app.infrastructure.alerts.email_notification_state import (
+    InMemoryEmailNotificationState,
+)
 from app.infrastructure.repositories.memory_repository import InMemoryListingRepository
 from app.tests.conftest import (
     ExplodingRepository,
@@ -36,6 +39,7 @@ def build(
     clock: MutableClock | None = None,
     notifier: FakeNotifier | None = None,
     additional_notifiers: tuple[FakeNotifier, ...] = (),
+    email_notification_state: InMemoryEmailNotificationState | None = None,
     alert_click_url: str | None = None,
 ) -> tuple[ScheduledSearchService, FakeScraper, RecordingLogger]:
     clock = clock or MutableClock(date(2026, 11, 4))
@@ -56,6 +60,7 @@ def build(
         notifiers=tuple(
             item for item in (notifier, *additional_notifiers) if item is not None
         ),
+        email_notification_state=email_notification_state,
         alert_click_url=alert_click_url,
         logger=logger,
         today=clock,
@@ -113,6 +118,91 @@ async def test_manual_search_does_not_suppress_daily_job() -> None:
     assert result is not None
     assert result.trigger is Trigger.SCHEDULER
     assert len(scraper.calls) == 2
+
+
+async def test_initial_email_sends_all_listings_then_only_new_ones() -> None:
+    clock = MutableClock(date(2026, 11, 4))
+    repository = InMemoryListingRepository(logger=RecordingLogger())
+    scraper = FakeScraper([make_listing(url="https://p/1")])
+    search_service = SearchService(
+        scraper,
+        FakeClassifier(),
+        repository,
+        logger=RecordingLogger(),
+        today=clock,
+    )
+    criteria = SearchCriteria(location="Madrid")
+    await search_service.run_search(criteria, trigger=Trigger.SCHEDULER.value)
+
+    clock.current = date(2026, 11, 5)
+    scraper.listings = [
+        make_listing(url=f"https://p/{index}") for index in range(1, 13)
+    ]
+    email = FakeNotifier()
+    email.channel = "email"
+    ntfy = FakeNotifier()
+    ntfy.channel = "ntfy"
+    email_state = InMemoryEmailNotificationState()
+    service = ScheduledSearchService(
+        search_service,
+        repository,
+        criteria,
+        notifiers=(ntfy, email),
+        email_notification_state=email_state,
+        today=clock,
+        logger=RecordingLogger(),
+    )
+
+    await service.run_daily_job()
+
+    assert len(email.digests) == 1
+    assert all(
+        f"https://p/{index}" in email.digests[0]["message"]
+        for index in range(1, 13)
+    )
+    assert "\nhttps://p/1\n" not in ntfy.digests[0]["message"]
+    assert "\nhttps://p/12\n" not in ntfy.digests[0]["message"]
+    assert await email_state.has_sent_initial_digest()
+
+    clock.current = date(2026, 11, 6)
+    scraper.listings.append(make_listing(url="https://p/13"))
+    await service.run_daily_job()
+
+    assert len(email.digests) == 2
+    assert "https://p/13" in email.digests[1]["message"]
+    assert "\nhttps://p/1\n" not in email.digests[1]["message"]
+    assert "\nhttps://p/12\n" not in email.digests[1]["message"]
+
+
+async def test_failed_initial_email_does_not_mark_the_digest_as_sent() -> None:
+    email = FakeNotifier(error=RuntimeError("SMTP unavailable"))
+    email.channel = "email"
+    email_state = InMemoryEmailNotificationState()
+    service, _, logger = build(
+        notifier=email,
+        email_notification_state=email_state,
+    )
+
+    await service.run_daily_job()
+
+    assert not await email_state.has_sent_initial_digest()
+    assert logger.find("listing_alert_failed") is not None
+
+
+async def test_empty_initial_email_does_not_mark_the_digest_as_sent() -> None:
+    email = FakeNotifier()
+    email.channel = "email"
+    email_state = InMemoryEmailNotificationState()
+    service, _, _ = build(
+        scraper=FakeScraper(),
+        notifier=email,
+        email_notification_state=email_state,
+    )
+
+    await service.run_daily_job()
+
+    assert not email.digests
+    assert not await email_state.has_sent_initial_digest()
 
 
 async def test_daily_job_reraises_domain_error_for_manual_invocation() -> None:

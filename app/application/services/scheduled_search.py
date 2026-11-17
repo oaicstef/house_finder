@@ -12,9 +12,14 @@ from datetime import date
 from typing import Any, Awaitable, Callable, Sequence
 
 from app.application.services.listing_alerts import build_digest, select_new_listings
-from app.domain.exceptions import DomainException
+from app.domain.exceptions import DomainException, RepositoryException
 from app.domain.models import SearchCriteria, SearchResult
-from app.domain.ports import AlertNotifierPort, ListingRepository, SearchServiceProtocol
+from app.domain.ports import (
+    AlertNotifierPort,
+    EmailNotificationStatePort,
+    ListingRepository,
+    SearchServiceProtocol,
+)
 from app.infrastructure.logging_config import get_logger
 
 __all__ = ["ScheduledSearchService", "SCHEDULED_JOB_ID"]
@@ -34,6 +39,7 @@ class ScheduledSearchService:
         *,
         criteria_provider: Callable[[], Awaitable[SearchCriteria]] | None = None,
         notifiers: Sequence[AlertNotifierPort] = (),
+        email_notification_state: EmailNotificationStatePort | None = None,
         alert_click_url: str | None = None,
         logger: Any | None = None,
         today: Callable[[], date] | None = None,
@@ -45,6 +51,7 @@ class ScheduledSearchService:
         self._criteria_provider = criteria_provider
         # Cada canal es independiente: un fallo no impide intentar los demás.
         self._notifiers = tuple(notifiers)
+        self._email_notification_state = email_notification_state
         self._alert_click_url = alert_click_url
         self._logger = logger or get_logger("app.scheduler")
         self._today = today or date.today
@@ -145,7 +152,24 @@ class ScheduledSearchService:
             return
 
         new_listings = select_new_listings(result, previous)
-        if not new_listings:
+        initial_email_digest = False
+        if self._email_notification_state is not None and any(
+            notifier.channel == "email" for notifier in self._notifiers
+        ):
+            try:
+                initial_email_digest = (
+                    not await self._email_notification_state.has_sent_initial_digest()
+                )
+            except RepositoryException as exc:
+                self._logger.warning(
+                    "email_initial_digest_state_read_failed",
+                    error_code=exc.code,
+                    search_id=str(result.search_id),
+                    channel="email",
+                )
+                initial_email_digest = True
+
+        if not new_listings and not (initial_email_digest and result.listings):
             self._logger.info(
                 "listing_alert_skipped",
                 search_id=str(result.search_id),
@@ -153,12 +177,29 @@ class ScheduledSearchService:
             )
             return
 
-        digest = build_digest(
-            new_listings,
-            result.criteria,
-            dashboard_url=self._alert_click_url,
-        )
         for notifier in self._notifiers:
+            listings_to_send = (
+                result.listings
+                if notifier.channel == "email" and initial_email_digest
+                else new_listings
+            )
+            if not listings_to_send:
+                continue
+
+            if notifier.channel == "email" and initial_email_digest:
+                digest = build_digest(
+                    listings_to_send,
+                    result.criteria,
+                    dashboard_url=self._alert_click_url,
+                    max_listings=len(listings_to_send),
+                )
+            else:
+                digest = build_digest(
+                    listings_to_send,
+                    result.criteria,
+                    dashboard_url=self._alert_click_url,
+                )
+
             try:
                 await notifier.send_digest(
                     title=digest.title,
@@ -172,15 +213,34 @@ class ScheduledSearchService:
                     channel=notifier.channel,
                     error_code="NOTIFICATION_FAILURE",
                     new_count=len(new_listings),
+                    sent_count=len(listings_to_send),
                 )
                 continue
+
+            if (
+                notifier.channel == "email"
+                and initial_email_digest
+                and self._email_notification_state is not None
+            ):
+                try:
+                    await self._email_notification_state.mark_initial_digest_sent()
+                except RepositoryException as exc:
+                    self._logger.warning(
+                        "email_initial_digest_state_write_failed",
+                        error_code=exc.code,
+                        search_id=str(result.search_id),
+                        channel="email",
+                        sent_count=len(listings_to_send),
+                    )
 
             self._logger.info(
                 "listing_alert_sent",
                 search_id=str(result.search_id),
                 channel=notifier.channel,
                 new_count=len(new_listings),
+                sent_count=len(listings_to_send),
                 total_count=result.matched_count,
+                initial_digest=notifier.channel == "email" and initial_email_digest,
             )
 
     async def scheduler_entrypoint(self) -> None:

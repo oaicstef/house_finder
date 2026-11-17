@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import app.api.dependencies as dependencies
 from app.config import Settings
+from app.infrastructure.alerts.email_notification_state import (
+    InMemoryEmailNotificationState,
+    JsonEmailNotificationState,
+)
 from app.tests.conftest import FakeClassifier, FakeNotifier, FakeScraper
 
 
@@ -51,3 +56,36 @@ def test_build_container_composes_enabled_notification_channels(monkeypatch: Any
         "ntfy",
         "email",
     ]
+    assert isinstance(
+        container.email_notification_state,
+        InMemoryEmailNotificationState,
+    )
+
+
+async def test_build_container_persists_email_state_alongside_results(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        environment="test",
+        results_dir=str(tmp_path / "results"),
+        search_profile_json="",
+        email_alerts_enabled=True,
+        email_smtp_host="smtp.example.com",
+        email_from="alerts@example.com",
+        email_to="user@example.com",
+    )
+    monkeypatch.setattr(dependencies, "build_scraper", lambda _settings: FakeScraper())
+    monkeypatch.setattr(
+        dependencies,
+        "DeepSeekListingClassifier",
+        lambda **_kwargs: FakeClassifier(),
+    )
+
+    container = dependencies.build_container(settings)
+
+    assert isinstance(container.email_notification_state, JsonEmailNotificationState)
+    assert container.email_notification_state is not None
+    await container.email_notification_state.mark_initial_digest_sent()
+    assert (tmp_path / "email-notification-state.json").is_file()

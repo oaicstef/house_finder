@@ -925,6 +925,13 @@ El host, remitente y al menos un destinatario son obligatorios al activar el can
 direcciones múltiples se separan por comas. El envío se realiza fuera del event loop y
 un fallo SMTP queda registrado sin impedir la alerta ntfy ni invalidar la búsqueda.
 
+El primer email aceptado por SMTP incluye **todos los anuncios clasificados de esa
+ejecución**, sin el límite habitual de diez entradas y aunque existan búsquedas
+programadas anteriores; los siguientes contienen solo anuncios nuevos. El marcador de
+ese primer envío se guarda como
+`email-notification-state.json` junto al directorio de resultados para sobrevivir a
+reinicios. Si `RESULTS_DIR` está vacío, el estado es solo en memoria.
+
 En Kubernetes, define `EMAIL_SMTP_HOST` y activa `EMAIL_ALERTS_ENABLED` en
 `deploy/k8s/configmap.yaml`. Guarda `EMAIL_FROM`, `EMAIL_TO` y, si aplica, las
 credenciales SMTP como GitHub Actions Secrets con esos mismos nombres. El pipeline las

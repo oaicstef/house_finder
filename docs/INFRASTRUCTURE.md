@@ -97,6 +97,7 @@ Fijado en el ConfigMap (`deploy/k8s/configmap.yaml`):
 | `ENABLE_SCHEDULER` | `true` | Job diario a las 07:00 (`TIMEZONE=Europe/Madrid`). |
 | `SCRAPER_PROVIDERS` | `idealista=apify,fotocasa=local` | `idealista-api` solo con acceso aprobado. |
 | `RESULTS_DIR` | `/data/results` | PVC: los resultados sobreviven a reinicios. |
+| Estado del email inicial | `/data/email-notification-state.json` | En el mismo PVC; marca que el primer digest SMTP completo fue aceptado. |
 | `ALERTS_ENABLED` | `true` | Sin `NTFY_TOPIC` el arranque falla (`CONFIGURATION_ERROR`). |
 | `ALERT_CLICK_URL` | `https://oaichousefinder.duckdns.org` | URL que abre la notificación. |
 | `EMAIL_ALERTS_ENABLED` | `false` | Opt-in. Al activarlo, configura `EMAIL_SMTP_HOST` y los secretos de email indicados arriba. |
