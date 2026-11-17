@@ -1367,20 +1367,30 @@ con error, en lugar de producir un falso positivo.
    proporciona secretos SMTP como variables de entorno sin registrarlos.
 3. [x] Ejecutar tests locales y validaciones; criterio: suite focalizada y validadores
    pasan.
-4. [ ] Ejecutar el workflow manual con los secretos configurados; criterio: SMTP acepta
+4. [x] Ejecutar el workflow manual con los secretos configurados; criterio: SMTP acepta
    el mensaje y el log confirma éxito sin datos personales.
 
 ### Criterios de aceptación
 
-- [ ] El test sintetiza una única vivienda nueva y recorre `ScheduledSearchService`,
+- [x] El test sintetiza una única vivienda nueva y recorre `ScheduledSearchService`,
   `build_digest` y `EmailNotifier` reales.
-- [ ] No se invocan endpoints de búsqueda, scrapers, Apify o DeepSeek.
-- [ ] La acción manual informa aceptación SMTP sin filtrar secretos/destinatarios.
-- [ ] La suite enfocada y las validaciones del workflow pasan.
+- [x] No se invocan endpoints de búsqueda, scrapers, Apify o DeepSeek.
+- [x] La acción manual informa aceptación SMTP sin filtrar secretos/destinatarios.
+- [x] La suite enfocada y las validaciones del workflow pasan.
 
 ### Checklist de progreso
 
 - [x] 1. Harness E2E de vivienda sintética.
 - [x] 2. Workflow manual protegido por secretos.
 - [x] 3. Validación local.
-- [ ] 4. Prueba real SMTP y confirmación de recepción.
+- [x] 4. Prueba real SMTP.
+
+### Evidencia
+
+- `pytest -q app/tests/test_scheduled_search.py app/tests/test_email_notifier.py` pasó
+  (17 tests); el harness se verificó localmente con el transporte SMTP simulado.
+- Workflow `Email notification E2E` (`43985344332`) pasó con una vivienda sintética.
+  Los logs registran `email_alert_delivered` para 2 destinatarios y
+  `listing_alert_sent` con `new_count=1`, sin mostrar direcciones ni credenciales.
+- El servidor SMTP aceptó el mensaje. La llegada final a las bandejas de entrada no se
+  puede observar desde este entorno.
