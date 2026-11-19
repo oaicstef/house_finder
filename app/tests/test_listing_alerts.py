@@ -41,6 +41,34 @@ def test_the_digest_describes_price_size_rooms_and_portal() -> None:
     assert listing.listing.url in digest.message
 
 
+def test_html_digest_uses_only_the_first_https_photo_and_escapes_content() -> None:
+    listing = scored(
+        title='<Casa "nueva"> & piscina',
+        url="https://homes.example/1?a=1&b=2",
+        photos=("https://img.example/main.jpg", "https://img.example/other.jpg"),
+    )
+
+    digest = build_digest([listing], SearchCriteria(location="Madrid"))
+
+    assert digest.html_message is not None
+    assert 'src="https://img.example/main.jpg"' in digest.html_message
+    assert "other.jpg" not in digest.html_message
+    assert "&lt;Casa &quot;nueva&quot;&gt; &amp; piscina" in digest.html_message
+    assert "https://homes.example/1?a=1&amp;b=2" in digest.html_message
+    assert "<Casa" in digest.message, "el mensaje de texto existente no cambia"
+
+
+def test_html_digest_omits_non_https_photo_but_keeps_listing_details() -> None:
+    listing = scored(photos=("http://img.example/main.jpg",))
+
+    digest = build_digest([listing], SearchCriteria(location="Madrid"))
+
+    assert digest.html_message is not None
+    assert "<img " not in digest.html_message
+    assert "Piso luminoso en Chamberí" in digest.html_message
+    assert listing.listing.url in digest.message
+
+
 def test_the_title_switches_to_singular_for_one_listing() -> None:
     digest = build_digest([scored()], SearchCriteria(location="Madrid"))
 

@@ -36,11 +36,13 @@ async def test_sends_the_digest_to_the_topic_endpoint() -> None:
         title="2 viviendas nuevas \u2014 Madrid",
         message="1. 895.000 \u20ac\nhttps://p/1",
         click_url="https://p/1",
+        html_message="<p>versión HTML</p>",
     )
 
     assert seen["method"] == "POST"
     assert seen["url"] == "https://ntfy.sh/mi-topic"
     assert seen["body"] == "1. 895.000 \u20ac\nhttps://p/1"
+    assert seen["headers"]["content-type"] == "text/plain; charset=utf-8"
     assert seen["headers"]["title"] == "2 viviendas nuevas - Madrid"
     assert seen["headers"]["click"] == "https://p/1"
     assert seen["headers"]["priority"] == "3"

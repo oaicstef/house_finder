@@ -205,6 +205,7 @@ class ScheduledSearchService:
                     title=digest.title,
                     message=digest.message,
                     click_url=digest.click_url,
+                    html_message=digest.html_message,
                 )
             except Exception:  # un canal caído no invalida el resultado ni los demás
                 self._logger.exception(

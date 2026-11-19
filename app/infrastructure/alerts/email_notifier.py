@@ -6,6 +6,7 @@ import asyncio
 import smtplib
 import ssl
 from email.message import EmailMessage
+from html import escape
 from typing import Any, Callable, Sequence
 
 from app.domain.exceptions import NotificationException
@@ -15,7 +16,7 @@ __all__ = ["EmailNotifier"]
 
 
 class EmailNotifier:
-    """Entrega el resumen de viviendas nuevas por correo de texto plano."""
+    """Entrega el resumen por correo en texto plano y, opcionalmente, HTML."""
 
     channel = "email"
 
@@ -62,6 +63,7 @@ class EmailNotifier:
         title: str,
         message: str,
         click_url: str | None = None,
+        html_message: str | None = None,
     ) -> None:
         """Envía un email sin bloquear el event loop de la aplicación."""
         email = EmailMessage()
@@ -72,6 +74,14 @@ class EmailNotifier:
         if click_url:
             body += f"\n\nAbrir House Finder: {click_url}"
         email.set_content(body)
+        if html_message:
+            html_body = html_message
+            if click_url:
+                html_body += (
+                    "<p>Abrir House Finder: "
+                    f"{escape(click_url)}</p>"
+                )
+            email.add_alternative(html_body, subtype="html")
 
         try:
             await asyncio.to_thread(self._deliver, email)

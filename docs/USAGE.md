@@ -932,6 +932,10 @@ ese primer envío se guarda como
 `email-notification-state.json` junto al directorio de resultados para sobrevivir a
 reinicios. Si `RESULTS_DIR` está vacío, el estado es solo en memoria.
 
+El email incluye una versión HTML con la primera foto HTTPS de cada anuncio mostrado.
+Las imágenes se cargan desde el portal cuando el cliente de correo las permite; el
+mensaje conserva también una alternativa de texto y los enlaces a los anuncios.
+
 En Kubernetes, define `EMAIL_SMTP_HOST` y activa `EMAIL_ALERTS_ENABLED` en
 `deploy/k8s/configmap.yaml`. Guarda `EMAIL_FROM`, `EMAIL_TO` y, si aplica, las
 credenciales SMTP como GitHub Actions Secrets con esos mismos nombres. El pipeline las

@@ -1530,3 +1530,98 @@ marcador sin confirmar. Un fallo SMTP conserva el comportamiento actual por cana
 - Se verificó que el primer digest SMTP no trunca resultados tras diez entradas, que ntfy
   y los emails posteriores solo incluyen novedades y que los fallos SMTP no confirman el
   marcador inicial.
+
+## Revisión 2026-11-19 — imagen principal en alertas por email
+
+### Objetivo
+
+Mejorar el correo de cada vivienda incluida en el digest para mostrar su imagen principal
+cuando el anuncio tenga una foto disponible. Mantener el cuerpo de texto como alternativa
+accesible y no cambiar el contenido ni el comportamiento de ntfy.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Añadir una alternativa HTML al mensaje del digest, conservando el texto actual.
+- Mostrar la primera URL HTTPS de `Listing.photos` como foto principal de cada vivienda
+  mostrada en el correo.
+- Escapar títulos y URLs al generar HTML y mantener enlaces al anuncio.
+- Añadir pruebas focalizadas y documentar que el cliente de correo debe permitir imágenes
+  remotas para mostrarlas.
+
+#### Fuera del alcance (out of scope)
+
+- Descargar, transformar o adjuntar imágenes; el correo referenciará el CDN del portal.
+- Cambiar los límites actuales de viviendas mostradas, el digest inicial completo, SMTP,
+  la selección de novedades o ntfy.
+- Añadir secretos, dependencias, endpoints o configuración nueva.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Transporte de imagen | `<img>` con la primera URL HTTPS de `photos` | Evita nuevas solicitudes desde el backend, SSRF, adjuntos voluminosos y dependencia de conversión de imágenes. |
+| Formato de correo | Multipart/alternative con texto plano y HTML | Conserva compatibilidad, accesibilidad y el cuerpo de texto ya probado. |
+| Separación por canal | El digest conserva mensaje de texto y añade un HTML opcional; ntfy ignora ese campo | La presentación enriquecida es exclusiva del email. |
+| Sin foto válida | No mostrar imagen y conservar los detalles/enlace del anuncio | Una foto ausente o URL no HTTPS no debe impedir la alerta. |
+| Alcance por digest | Imagen para cada anuncio que ya se muestra como entrada | No altera el límite habitual ni el primer digest completo. |
+
+### Flujo del job programado
+
+1. Construir el digest de texto existente y una representación HTML escapada para las
+   mismas viviendas mostradas.
+2. Añadir a cada entrada HTML la primera URL HTTPS de `Listing.photos`, si existe.
+3. Enviar ambos formatos al canal email; mantener sin cambios los argumentos visibles de
+   ntfy y su mensaje de texto.
+4. Si el cliente bloquea imágenes remotas, mantener disponible el texto y el enlace del
+   anuncio.
+
+### Plan de tests
+
+- El HTML muestra la primera foto, pero no las fotos secundarias, y mantiene texto, precio
+  y enlace del anuncio.
+- Títulos y URLs con caracteres HTML se escapan; una URL no HTTPS no se usa como imagen.
+- El notificador SMTP envía texto y HTML como `multipart/alternative`, y sigue enviando
+  solo texto cuando no se proporciona HTML.
+- ntfy conserva el contenido de texto sin cambios.
+- Ejecutar tests focalizados, suite completa y `git diff --check`.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El cliente bloquea imágenes remotas o el CDN cambia la URL | La foto no se visualiza | El texto, el enlace al anuncio y el cuerpo alternativo permanecen disponibles. |
+| Datos del portal se insertan en el HTML | Marcado incorrecto o enlace engañoso | Escapar texto y atributos con las utilidades estándar de HTML y aceptar solo URL HTTPS como `src`. |
+| Los anuncios no tienen fotos | No hay imagen para esa vivienda | Mostrar igualmente el resto de datos y el enlace. |
+
+### Orden de implementación
+
+1. Añadir representación HTML segura al digest sin cambiar el mensaje de texto.
+2. Extender el contrato de notificación con HTML opcional; consumirlo en SMTP y conservar
+   el cuerpo actual de ntfy.
+3. Añadir pruebas para el digest, el MIME del correo, ausencia de foto y seguridad de
+   escape/protocolo.
+4. Documentar la representación de imagen remota y ejecutar validaciones.
+
+### Criterios de aceptación
+
+- [x] Cada entrada mostrada con foto incluye su imagen principal en la versión HTML del email.
+- [x] El texto plano sigue disponible y una foto ausente/no HTTPS no bloquea la alerta.
+- [x] ntfy y los límites actuales del digest no cambian.
+- [x] Tests focalizados, suite completa y `git diff --check` pasan.
+
+### Checklist de progreso
+
+- [x] 1. HTML seguro por vivienda en el digest.
+- [x] 2. Integración de la alternativa HTML en el canal email.
+- [x] 3. Tests focalizados para imagen, fallback y escape.
+- [x] 4. Documentación y validación.
+
+### Evidencia
+
+- Los tests de digest verifican primera imagen HTTPS, escape HTML y fallback sin foto;
+  los tests del notificador verifican `multipart/alternative` y que ntfy conserva texto.
+- El flujo programado comprueba que la representación HTML llega al email inicial sin
+  cambiar el contenido de texto ni el comportamiento de ntfy.
+- La suite completa de pytest, `compileall` y `git diff --check` pasaron.

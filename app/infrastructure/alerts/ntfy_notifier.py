@@ -84,6 +84,7 @@ class NtfyNotifier:
         title: str,
         message: str,
         click_url: str | None = None,
+        html_message: str | None = None,
     ) -> None:
         headers = {
             "Title": _ascii_header(title),

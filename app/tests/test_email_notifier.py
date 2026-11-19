@@ -86,6 +86,27 @@ async def test_sends_digest_over_starttls_with_authentication() -> None:
     ]
 
 
+async def test_sends_html_as_an_alternative_to_the_plain_text_body() -> None:
+    smtp = FakeSMTP()
+    notifier = build_notifier(smtp)
+
+    await notifier.send_digest(
+        title="Vivienda nueva",
+        message="Casa\nhttps://homes.example/1",
+        click_url="https://house-finder.example/",
+        html_message="<p>Casa</p>",
+    )
+
+    assert smtp.message is not None
+    assert smtp.message.get_content_type() == "multipart/alternative"
+    text_part, html_part = smtp.message.iter_parts()
+    assert text_part.get_content_type() == "text/plain"
+    assert "https://homes.example/1" in text_part.get_content()
+    assert html_part.get_content_type() == "text/html"
+    assert "<p>Casa</p>" in html_part.get_content()
+    assert "Abrir House Finder: https://house-finder.example/" in html_part.get_content()
+
+
 async def test_rejected_recipient_becomes_notification_exception() -> None:
     refused = {"one@example.com": (550, b"mailbox unavailable")}
     smtp = FakeSMTP(refused=refused)

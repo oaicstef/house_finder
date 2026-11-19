@@ -136,7 +136,11 @@ async def test_initial_email_sends_all_listings_then_only_new_ones() -> None:
 
     clock.current = date(2026, 11, 5)
     scraper.listings = [
-        make_listing(url=f"https://p/{index}") for index in range(1, 13)
+        make_listing(
+            url=f"https://p/{index}",
+            photos=("https://img.example/main.jpg",) if index == 1 else (),
+        )
+        for index in range(1, 13)
     ]
     email = FakeNotifier()
     email.channel = "email"
@@ -160,6 +164,8 @@ async def test_initial_email_sends_all_listings_then_only_new_ones() -> None:
         f"https://p/{index}" in email.digests[0]["message"]
         for index in range(1, 13)
     )
+    assert email.digests[0]["html_message"] is not None
+    assert 'src="https://img.example/main.jpg"' in email.digests[0]["html_message"]
     assert "\nhttps://p/1\n" not in ntfy.digests[0]["message"]
     assert "\nhttps://p/12\n" not in ntfy.digests[0]["message"]
     assert await email_state.has_sent_initial_digest()

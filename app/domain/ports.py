@@ -149,8 +149,9 @@ class AlertNotifierPort(Protocol):
         title: str,
         message: str,
         click_url: str | None = None,
+        html_message: str | None = None,
     ) -> None:
-        """Envía el resumen.
+        """Envía el resumen; el canal puede ignorar la alternativa HTML.
 
         Raises:
             NotificationException: si el servicio de notificaciones falla.

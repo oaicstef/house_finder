@@ -92,10 +92,18 @@ class FakeNotifier:
         title: str,
         message: str,
         click_url: str | None = None,
+        html_message: str | None = None,
     ) -> None:
         if self.error is not None:
             raise self.error
-        self.digests.append({"title": title, "message": message, "click_url": click_url})
+        self.digests.append(
+            {
+                "title": title,
+                "message": message,
+                "click_url": click_url,
+                "html_message": html_message,
+            }
+        )
 
 
 class FakeClassifier:
