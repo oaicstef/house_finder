@@ -192,12 +192,14 @@ class ScheduledSearchService:
                     result.criteria,
                     dashboard_url=self._alert_click_url,
                     max_listings=len(listings_to_send),
+                    include_summaries=True,
                 )
             else:
                 digest = build_digest(
                     listings_to_send,
                     result.criteria,
                     dashboard_url=self._alert_click_url,
+                    include_summaries=notifier.channel == "email",
                 )
 
             try:

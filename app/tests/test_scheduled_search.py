@@ -139,6 +139,11 @@ async def test_initial_email_sends_all_listings_then_only_new_ones() -> None:
         make_listing(
             url=f"https://p/{index}",
             photos=("https://img.example/main.jpg",) if index == 1 else (),
+            description=(
+                "Casa sintética con terraza."
+                if index == 1
+                else "Descripción de otra vivienda."
+            ),
         )
         for index in range(1, 13)
     ]
@@ -166,16 +171,25 @@ async def test_initial_email_sends_all_listings_then_only_new_ones() -> None:
     )
     assert email.digests[0]["html_message"] is not None
     assert 'src="https://img.example/main.jpg"' in email.digests[0]["html_message"]
+    assert "Descripción: Casa sintética con terraza." in email.digests[0]["message"]
+    assert "Casa sintética con terraza." in email.digests[0]["html_message"]
+    assert "Descripción:" not in ntfy.digests[0]["message"]
     assert "\nhttps://p/1\n" not in ntfy.digests[0]["message"]
     assert "\nhttps://p/12\n" not in ntfy.digests[0]["message"]
     assert await email_state.has_sent_initial_digest()
 
     clock.current = date(2026, 11, 6)
-    scraper.listings.append(make_listing(url="https://p/13"))
+    scraper.listings.append(
+        make_listing(
+            url="https://p/13",
+            description="Casa nueva con jardín.",
+        )
+    )
     await service.run_daily_job()
 
     assert len(email.digests) == 2
     assert "https://p/13" in email.digests[1]["message"]
+    assert "Descripción: Casa nueva con jardín." in email.digests[1]["message"]
     assert "\nhttps://p/1\n" not in email.digests[1]["message"]
     assert "\nhttps://p/12\n" not in email.digests[1]["message"]
 
