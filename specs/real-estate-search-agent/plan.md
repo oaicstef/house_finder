@@ -1697,4 +1697,11 @@ manteniendo la información derivada del anuncio original y sin modificar ntfy.
 - [x] 1. Extracto conciso en texto y HTML exclusivamente para email.
 - [x] 2. Cobertura focalizada de formato, límite y fallback.
 - [x] 3. Harness E2E verifica el contenido sintético.
-- [ ] 4. Validaciones y envío E2E SMTP.
+- [x] 4. Validaciones y envío E2E SMTP.
+
+### Evidencia
+
+- Suite completa de pytest, `compileall` y `git diff --check` pasaron.
+- El workflow `Email notification E2E` (`44702523007`) verificó el extracto en texto y
+  HTML antes de enviar el anuncio sintético; SMTP aceptó el mensaje para su entrega.
+- La aceptación SMTP no confirma la llegada final al buzón.
