@@ -1625,3 +1625,83 @@ accesible y no cambiar el contenido ni el comportamiento de ntfy.
 - El flujo programado comprueba que la representación HTML llega al email inicial sin
   cambiar el contenido de texto ni el comportamiento de ntfy.
 - La suite completa de pytest, `compileall` y `git diff --check` pasaron.
+
+## Revisión 2026-11-20 — resumen conciso por anuncio en email
+
+### Objetivo
+
+Incluir una descripción concisa en cada anuncio mostrado por las alertas de email,
+manteniendo la información derivada del anuncio original y sin modificar ntfy.
+
+### Alcance
+
+#### Dentro del alcance
+
+- Tomar `Listing.description`, normalizar espacios y limitar el extracto a 240 caracteres.
+- Mostrar el extracto en las versiones de texto y HTML del email, escapándolo en HTML.
+- Omitir el extracto si la descripción no existe o está vacía.
+- Extender el harness E2E sintético para comprobar el resumen en ambos formatos y enviar
+  el mensaje mediante SMTP real.
+
+#### Fuera del alcance (out of scope)
+
+- Generar resúmenes con un LLM, incurrir en más llamadas/coste o añadir nuevas dependencias.
+- Cambiar los criterios de novedad, la cantidad de anuncios, ni el contenido de ntfy.
+- Reutilizar o persistir resúmenes; cada extracto se calcula desde el resultado actual.
+
+### Decisiones de arquitectura
+
+| Decisión | Elección | Justificación |
+|---|---|---|
+| Fuente | `Listing.description` ya obtenido del portal | Evita contenido inventado y llamadas externas adicionales. |
+| Resumen | Recortar determinísticamente a 240 caracteres tras colapsar espacios | Es predecible, rápido y suficientemente conciso para email. |
+| Canales | Incluirlo solo en el digest construido para email | ntfy conserva su texto y límite actuales. |
+| Descripción ausente | No añadir una línea vacía o texto sustituto | Mantiene los correos concisos y usa solo información disponible. |
+| Prueba E2E | Anuncio sintético identificable, aserciones de texto/HTML y envío SMTP | Verifica el contenido de la nueva función sin usar un anuncio real. |
+
+### Plan de tests
+
+- El extracto aparece en el texto y HTML del digest email, se compacta el whitespace y
+  no supera 240 caracteres.
+- Se escapa contenido HTML y se omite una descripción vacía.
+- El digest ntfy no contiene la descripción cuando la opción de email no está activada.
+- El harness E2E verifica el extracto esperado en ambos formatos antes del envío SMTP y
+  informa éxito solo cuando SMTP acepta el mensaje.
+- Ejecutar tests focalizados, suite completa, `compileall` y `git diff --check`.
+- Ejecutar el E2E SMTP con la configuración de prueba disponible; informar aceptación
+  SMTP sin afirmar que se confirmó la llegada final al buzón.
+
+### Riesgos y mitigaciones
+
+| Riesgo | Impacto | Mitigación |
+|---|---|---|
+| El recorte termina a mitad de una frase | Extracto menos natural | Recortar en el límite de palabra y añadir puntos suspensivos. |
+| El texto original contiene marcado HTML | Marcado inválido o inyectado en el email | Escapar el resumen al insertarlo en HTML. |
+| SMTP acepta el correo sin entregarlo al buzón | El E2E no prueba llegada final | Reportar únicamente aceptación del servidor SMTP. |
+
+### Orden de implementación
+
+1. Añadir una función determinista de extracto y mostrarla en los dos formatos email.
+2. Activar el extracto solo para email desde el job programado.
+3. Añadir pruebas focalizadas y adaptar el harness sintético E2E para verificar el contenido.
+4. Documentar el comportamiento, ejecutar la suite y realizar el envío E2E solicitado.
+
+### Criterios de aceptación
+
+- Cada anuncio mostrado en email incluye un extracto de su descripción, cuando existe.
+- El extracto no excede 240 caracteres, se escapa en HTML y no aparece en ntfy.
+- El E2E SMTP verifica el contenido sintético y el servidor acepta el envío.
+
+### Checklist de progreso
+
+- [x] 1. Extracto conciso en texto y HTML exclusivamente para email.
+- [x] 2. Cobertura focalizada de formato, límite y fallback.
+- [x] 3. Harness E2E verifica el contenido sintético.
+- [x] 4. Validaciones y envío E2E SMTP.
+
+### Evidencia
+
+- Suite completa de pytest, `compileall` y `git diff --check` pasaron.
+- El workflow `Email notification E2E` (`44702523007`) verificó el extracto en texto y
+  HTML antes de enviar el anuncio sintético; SMTP aceptó el mensaje para su entrega.
+- La aceptación SMTP no confirma la llegada final al buzón.

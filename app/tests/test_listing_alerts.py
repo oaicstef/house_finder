@@ -69,6 +69,56 @@ def test_html_digest_omits_non_https_photo_but_keeps_listing_details() -> None:
     assert listing.listing.url in digest.message
 
 
+def test_email_digest_adds_a_compact_description_to_both_formats() -> None:
+    description = (
+        "  Casa   luminosa con terraza y jardín. "
+        + "Descripción larga de prueba. " * 20
+    )
+    listing = scored(description=description)
+
+    digest = build_digest(
+        [listing],
+        SearchCriteria(location="Madrid"),
+        include_summaries=True,
+    )
+
+    summary_line = next(
+        line for line in digest.message.splitlines() if line.startswith("Descripción: ")
+    )
+    summary = summary_line.removeprefix("Descripción: ")
+    assert summary.startswith("Casa luminosa con terraza y jardín.")
+    assert len(summary) <= 240
+    assert summary.endswith("…")
+    assert summary in (digest.html_message or "")
+
+
+def test_default_digest_does_not_expose_listing_description() -> None:
+    listing = scored(description="Descripción privada para esta prueba.")
+
+    digest = build_digest([listing], SearchCriteria(location="Madrid"))
+
+    assert "Descripción privada" not in digest.message
+    assert "Descripción privada" not in (digest.html_message or "")
+
+
+def test_email_digest_escapes_summary_and_omits_empty_description() -> None:
+    listing = scored(description="  <script>casa & patio</script>  ")
+    empty_listing = scored(url="https://homes.example/empty", description="  \n ")
+
+    digest = build_digest(
+        [listing, empty_listing],
+        SearchCriteria(location="Madrid"),
+        include_summaries=True,
+    )
+
+    assert "<script>" in digest.message
+    assert "&lt;script&gt;casa &amp; patio&lt;/script&gt;" in (
+        digest.html_message or ""
+    )
+    assert "Descripción:" in digest.message
+    assert digest.message.count("Descripción:") == 1
+
+
 def test_the_title_switches_to_singular_for_one_listing() -> None:
     digest = build_digest([scored()], SearchCriteria(location="Madrid"))
 

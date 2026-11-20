@@ -24,6 +24,7 @@ __all__ = [
 
 #: Viviendas que caben en el mensaje; el resto se resume en una línea final.
 DIGEST_MAX_LISTINGS = 10
+_EMAIL_SUMMARY_MAX_CHARS = 240
 
 _PORTAL_LABELS = {"idealista": "Idealista", "fotocasa": "Fotocasa"}
 
@@ -73,9 +74,27 @@ def _details(scored: ScoredListing) -> str:
     return " \u00b7 ".join(parts)
 
 
-def _describe(scored: ScoredListing) -> str:
+def _summary_description(description: str | None) -> str | None:
+    summary = " ".join((description or "").split())
+    if not summary:
+        return None
+    if len(summary) <= _EMAIL_SUMMARY_MAX_CHARS:
+        return summary
+
+    shortened = summary[: _EMAIL_SUMMARY_MAX_CHARS - 1]
+    if " " in shortened:
+        shortened = shortened.rsplit(" ", 1)[0]
+    return f"{shortened.rstrip()}…"
+
+
+def _describe(scored: ScoredListing, *, include_summary: bool) -> str:
     listing = scored.listing
-    return f"{_details(scored)}\n{listing.title}\n{listing.url}"
+    lines = [_details(scored), listing.title]
+    summary = _summary_description(listing.description) if include_summary else None
+    if summary:
+        lines.append(f"Descripción: {summary}")
+    lines.append(listing.url)
+    return "\n".join(lines)
 
 
 def _https_url(value: str) -> str | None:
@@ -94,11 +113,17 @@ def _https_url(value: str) -> str | None:
     return value.strip()
 
 
-def _describe_html(scored: ScoredListing, index: int) -> str:
+def _describe_html(
+    scored: ScoredListing,
+    index: int,
+    *,
+    include_summary: bool,
+) -> str:
     listing = scored.listing
     title = escape(listing.title)
     listing_url = _https_url(listing.url)
     image_url = _https_url(listing.photos[0]) if listing.photos else None
+    summary = _summary_description(listing.description) if include_summary else None
     if listing_url:
         title = f'<a href="{escape(listing_url, quote=True)}">{title}</a>'
         link = f'<p><a href="{escape(listing_url, quote=True)}">Ver anuncio</a></p>'
@@ -113,9 +138,12 @@ def _describe_html(scored: ScoredListing, index: int) -> str:
             'style="display:block;max-width:100%;height:auto"></p>'
         )
 
+    summary_html = (
+        f"<p><strong>Descripción:</strong> {escape(summary)}</p>" if summary else ""
+    )
     return (
         f"<section><p>{index}. <strong>{title}</strong></p>"
-        f"{image}<p>{escape(_details(scored))}</p>{link}</section>"
+        f"{image}<p>{escape(_details(scored))}</p>{summary_html}{link}</section>"
     )
 
 
@@ -125,19 +153,20 @@ def build_digest(
     *,
     dashboard_url: str | None = None,
     max_listings: int = DIGEST_MAX_LISTINGS,
+    include_summaries: bool = False,
 ) -> ListingDigest:
-    """Resumen push con las viviendas nuevas (una sola notificación)."""
+    """Resumen de viviendas nuevas; los extractos descriptivos son email-only."""
     total = len(new_listings)
     location = criteria.location or "tu b\u00fasqueda"
     title = f"{total} {_plural(total, 'vivienda nueva', 'viviendas nuevas')} \u2014 {location}"
 
     shown = list(new_listings[: max(1, max_listings)])
     blocks = [
-        f"{index}. {_describe(scored)}"
+        f"{index}. {_describe(scored, include_summary=include_summaries)}"
         for index, scored in enumerate(shown, start=1)
     ]
     html_blocks = [
-        _describe_html(scored, index)
+        _describe_html(scored, index, include_summary=include_summaries)
         for index, scored in enumerate(shown, start=1)
     ]
     hidden = total - len(shown)

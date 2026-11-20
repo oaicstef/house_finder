@@ -18,6 +18,14 @@ from app.domain.models import (
 )
 from app.infrastructure.alerts.email_notifier import EmailNotifier
 
+_SYNTHETIC_DESCRIPTION = (
+    "Vivienda sintética de prueba en Madrid con terraza y salón luminoso. "
+    + "Detalle adicional sintético para comprobar el resumen. " * 12
+)
+_EXPECTED_SUMMARY_START = (
+    "Vivienda sintética de prueba en Madrid con terraza y salón luminoso."
+)
+
 
 class SyntheticRepository:
     async def find_by_criteria_and_day(
@@ -43,7 +51,7 @@ class SyntheticSearchService:
             location=criteria.location,
             size_m2=1,
             rooms=1,
-            description="Mensaje de prueba; no representa una vivienda real.",
+            description=_SYNTHETIC_DESCRIPTION,
         )
         return SearchResult(
             search_id=uuid4(),
@@ -71,11 +79,30 @@ class DeliveryTracker:
         title: str,
         message: str,
         click_url: str | None = None,
+        html_message: str | None = None,
     ) -> None:
+        summary_line = next(
+            (
+                line.removeprefix("Descripción: ")
+                for line in message.splitlines()
+                if line.startswith("Descripción: ")
+            ),
+            "",
+        )
+        if (
+            not summary_line.startswith(_EXPECTED_SUMMARY_START)
+            or len(summary_line) > 240
+            or _SYNTHETIC_DESCRIPTION in message
+            or html_message is None
+            or _EXPECTED_SUMMARY_START not in html_message
+        ):
+            raise RuntimeError("El digest no contiene el resumen conciso esperado")
+
         await self._notifier.send_digest(
             title=title,
             message=message,
             click_url=click_url,
+            html_message=html_message,
         )
         self.delivered = True
 
